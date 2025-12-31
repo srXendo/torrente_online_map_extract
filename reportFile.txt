@@ -1,0 +1,35 @@
+
+=== REPORTE DE ANÁLISIS VTFF ===
+Archivo: Cuchillo.NFO
+Fecha: 2025-12-17T23:56:49.415Z
+
+SECCIONES IDENTIFICADAS:
+
+
+GRUPOS DE VÉRTICES:
+  Offset: 0x1c0, Vértices: 100
+  Offset: 0x670, Vértices: 72
+
+GRUPOS DE CARAS:
+  Offset: 0x3e, Caras: 5
+  Offset: 0x1c0, Caras: 3
+  Offset: 0x5f2, Caras: 8
+  Offset: 0x653, Caras: 72
+  Offset: 0x9d7, Caras: 5
+  Offset: 0xa1f, Caras: 7
+  Offset: 0xa7f, Caras: 5
+  Offset: 0xac7, Caras: 5
+  Offset: 0xb0f, Caras: 5
+  Offset: 0xb57, Caras: 5
+  Offset: 0xb9f, Caras: 7
+  Offset: 0xbff, Caras: 5
+  Offset: 0xc47, Caras: 4
+  Offset: 0xc83, Caras: 4
+  Offset: 0xcbf, Caras: 4
+  Offset: 0xcfb, Caras: 4
+
+RECOMENDACIONES:
+1. Usar el primer grupo de vértices encontrado
+2. Usar el grupo de caras más cercano a los vértices
+3. Verificar que el número de caras sea múltiplo de 3
+        

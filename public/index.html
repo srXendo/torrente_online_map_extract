@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>three.js FPS / Strafe</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+</head>
+<body>
+
+<script>
+function imageToGrid(imageUrl, cellSize = 8, border = 2) {
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.src = imageUrl;
+        img.crossOrigin = "anonymous";
+
+        img.onload = () => {
+            const canvas = document.createElement("canvas");
+            const ctx = canvas.getContext("2d");
+
+            canvas.width = img.width;
+            canvas.height = img.height;
+            ctx.drawImage(img, 0, 0);
+
+            const data = ctx.getImageData(0, 0, img.width, img.height).data;
+
+            const cols = Math.floor(img.width / cellSize);
+            const rows = Math.floor(img.height / cellSize);
+
+            let grid = Array.from({ length: rows }, () => Array(cols).fill(0));
+
+            for (let y = 0; y < rows; y++) {
+                for (let x = 0; x < cols; x++) {
+                    const x0 = x * cellSize + border;
+                    const y0 = y * cellSize + border;
+                    const innerSize = cellSize - 2 * border;
+                    let bloqueNegro = false;
+
+                    for (let dy = 0; dy < innerSize; dy++) {
+                        for (let dx = 0; dx < innerSize; dx++) {
+                            const px = x0 + dx;
+                            const py = y0 + dy;
+                            const i = (py * img.width + px) * 4;
+                            const r = data[i]; // canal rojo
+
+                            if (r < 128) {
+                                bloqueNegro = true;
+                                break;
+                            }
+                        }
+                        if (bloqueNegro) break;
+                    }
+
+                    grid[y][x] = bloqueNegro ? 1 : 0;
+                }
+            }
+
+            resolve(grid);
+        };
+    });
+}
+
+// Uso:
+imageToGrid("mapa.png", 8, 2).then((mapa2) => {
+    console.log(JSON.stringify(mapa2));
+});
+
+    const mapa = [
+        [0, 0, 1, 0, 0],
+        [1, 0, 1, 0, 1],
+        [0, 0, 0, 0, 0],
+        [0, 1, 1, 1, 0],
+        [0, 0, 0, 1, 0]
+    ];
+    let context_map = JSON.parse(JSON.stringify(mapa))
+    const players = {}
+    function start(){
+        let id_bot = 0
+        const is_respawn = spawn_player(id_bot, 0, 0, 0)
+        if(!is_respawn){
+            throw new Error('no respawn bot')
+        }
+        console.log("map before move player: ", context_map)
+        move_player(id_bot, 0, 1, 0)
+        move_player(id_bot, 1, 1, 0)
+        move_player(id_bot, 2, 2, 0)
+        console.log("map after move player: ", context_map)
+    }
+    
+    function spawn_player(id_bot, x, y, r){
+        const is_exist_bot = exist_player(id_bot)
+        if(is_exist_bot){
+            console.error(`bot exist in party: ${id_bot}`)
+            return false
+        }
+        let temp_mov = {
+            x: x,
+            y: y,
+            r: r,
+            id_bot: id_bot
+        }
+        const is_legal = check_legal_state(id_bot, temp_mov)
+        if(!is_legal){
+            console.error(`ilegal respawn id_bot: ${id_bot}`)
+            return false
+        }
+        players[id_bot] = temp_mov
+        context_map[players[id_bot].x][players[id_bot].y] =  players[id_bot]
+        return true
+    }
+    function move_player(id_bot, n_x, n_y){
+        if(!exist_player(id_bot)){
+            console.error(`bot no exist in party move_player: ${id_bot}`)
+            return false
+        }
+        let temp_mov = {
+            x: n_x,
+            y: n_y,
+            r: players[id_bot].r,
+            id_bot: id_bot
+        }
+        if(!check_legal_move(id_bot, temp_mov)){
+            console.error(`ilegal mov in party move_player: ${id_bot}`)
+            return false            
+        }
+        if(!check_legal_state(id_bot, temp_mov)){
+            console.error(`ilegal mov in party move_player: ${id_bot}`)
+            return false
+        }
+
+        context_map[players[id_bot].x][players[id_bot].y] = 0
+        context_map[n_x][n_y] = temp_mov
+        players[id_bot] = temp_mov
+        return true
+    }
+    
+    function check_legal_move(id_bot, temp_mov){
+        const {x, y} = temp_mov
+        const x_player = players[id_bot].x
+        const y_player = players[id_bot].y
+        if(x - x_player >= 2){
+            return false
+        }
+        if(x - x_player <= -2){
+            return false
+        }
+         console.log(x - x_player)
+        if(y - y_player >= 2){
+            return false
+        }
+        console.log(y - y_player)
+        if(y - y_player <= -2){
+            return false
+        }
+        return true
+
+    }
+    function check_legal_state(id_bot, temp_mov){
+        const {x, y, z} = temp_mov
+        if( !(mapa[x][y] === 0)){
+            console.error(new Error( `bot can't spawn in this: x: ${x}, y: ${y}, map: ${mapa[x][y]}`))
+            return false
+        }
+        return true
+    }
+    function exist_player(id_bot){
+        if(!players[id_bot]){
+            return false
+        }
+        return true
+    }
+    start()
+
+
+
+</script>
+</body>
+</html>
