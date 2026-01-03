@@ -1,5 +1,5 @@
 const fs = require('fs')
-const input_file_name = 'MP_DM_VERTIGO.opt'
+const input_file_name = 'mp_b_anderguater.opt'
 const output_file_name = 'test.opt.obj'
 
 if (!fs.existsSync(input_file_name)) {
@@ -46,12 +46,13 @@ const local_988 = reader.get_chunk(4);
 const this0x88 = reader.get_chunk(4);
 const local_92c = reader.get_chunk(4);
 
-
+const pvVar6 = []
 for(let i = 0; i < local_978.readUInt32LE(); i++){
-    const pvVar6 = FUN_FIRSTCALL_10055c00();
-    console.log(pvVar6)
-    break;
+    pvVar6.push(FUN_FIRSTCALL_10055c00())
 }
+console.log(JSON.stringify(pvVar6))
+
+
 function FUN_FIRSTCALL_10055c00(){
     
     const piVar1 = reader.get_chunk(4);
