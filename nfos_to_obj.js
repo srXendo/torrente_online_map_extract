@@ -1,5 +1,5 @@
 const fs = require('fs')
-const input_file_name = 'mp_b_anderguater.opt'
+const input_file_name = 'mp_dm_vertigo.opt'
 const output_file_name = 'test.opt.obj'
 
 if (!fs.existsSync(input_file_name)) {
@@ -29,7 +29,6 @@ class Reader {
 }
 const reader  = new Reader(input_file)
 const header = reader.get_chunk()
-console.log(header.toString('ascii'))
 if(header.toString('ascii') == 'VTOP'){
     throw new Error('OPT Mapa obsoleto')
 }else if(header.toString('ascii') != 'VTO1'){
@@ -50,8 +49,86 @@ const pvVar6 = []
 for(let i = 0; i < local_978.readUInt32LE(); i++){
     pvVar6.push(FUN_FIRSTCALL_10055c00())
 }
-console.log(JSON.stringify(pvVar6))
 
+
+const pvVar6_b = []
+for(let i = 0; i < local_97c.readUInt32LE(); i++){
+    let row = {
+        iStack_934: reader.get_chunk(4),
+        auStack_8d0: reader.get_chunk(0x40),
+        auStack_888: reader.get_chunk(0x60)
+    }
+    pvVar6_b.push(row)
+}
+
+
+const pvVar6_c = []
+for(let i = 0; i < local_980.readUInt32LE(); i++){
+    const sStack_970 = reader.get_chunk(4);
+    const pcVar8 = reader.get_chunk(sStack_970.readUInt32LE());
+    const auStack_91c = reader.get_chunk(0xc);
+    const fStack_938 = reader.get_chunk(4);
+    const fStack_93c = reader.get_chunk(4);
+    const uStack_930 = reader.get_chunk(4);
+    pvVar6_c.push({
+        sStack_970,
+        pcVar8,
+        auStack_91c,
+        fStack_938,
+        fStack_93c,
+        uStack_930
+    })
+}
+const pvVar6_d = []
+for(let i = 0; i < this0x7c.readUInt32LE(); i++){
+    const uStack_940 = reader.get_chunk(4);
+    let obj = {
+        0x10: reader.get_chunk(0x10),
+        0x20: reader.get_chunk(0x10),
+        0x30: reader.get_chunk(0x10)
+    }
+    switch(uStack_940.readUInt32LE()){
+        case 0: 
+            obj[0x44] = reader.get_chunk(0xc);
+            obj[0x50] = reader.get_chunk(4);
+            obj[0x54] = reader.get_chunk(4);
+            break;
+        case 1:
+            obj[0x44] = reader.get_chunk(0xc);
+            obj[0x50] = reader.get_chunk(0xc);
+            obj[0x5c] = reader.get_chunk(4);            
+            break;
+        case 2:
+            obj[0x80] = reader.get_chunk(0xc);
+            break;
+        case 3:
+        default:
+        break;
+    }
+    pvVar6_d.push(obj)
+}
+
+const pvVar6_e = []
+for(let i = 0; i < local_988.readUInt32LE(); i++){
+    const iStack_990 = reader.get_chunk(4);
+    const obj = {
+        0x00: reader.get_chunk(iStack_990.readUInt32LE() * 0xc),
+        childs: []
+    }
+    for(let x = 0; x < iStack_990.readUInt32LE(); x++){
+    }
+    pvVar6_e.push(obj)
+}
+
+const pvVar6_f = []
+for(let i = 0; i < this0x88.readUInt32LE(); i++){
+    const avStack_910 = reader.get_chunk(0x40);
+    const avStack_928 = reader.get_chunk(0xc);
+    pvVar6_f.push({
+        avStack_910,
+        avStack_928
+    })
+}
 
 function FUN_FIRSTCALL_10055c00(){
     
@@ -143,91 +220,21 @@ function FUN_FIRSTCALL_10055c00(){
     
 }
 
-/*const this0x14       = reader.get_chunk(4); // count of something (maybe materials?)
-const opt_file_byte_12 = reader.get_chunk(4);
-const length_elements  = reader.get_chunk(4); // count of "base" elements
-const local_980        = reader.get_chunk(4); // count of "named" elements (textures?)
-const this0x7c         = reader.get_chunk(4); // count of transform nodes?
-const opt_file_byte_28 = reader.get_chunk(4); // ← number of hulls (local_988)
-const this0x88         = reader.get_chunk(4);
-const opt_file_byte_36 = reader.get_chunk(4);
-const arr = []
-for (let i = 0; i < length_elements.readUInt32LE(); i++) {
-    const index = reader.get_chunk().readUInt32LE()
-    const block40 = reader.get_chunk(0x40)
-    const block60 = reader.get_chunk(0x60)
-
-    arr.push({
-        index,
-        blockA: block40, // 0x40
-        blockB: block60, // 0x60
-    })
+const exported = {
+    pvVar6,
+    pvVar6_b,
+    //pvVar6_c,
+    //pvVar6_d,
+    //pvVar6_e,
+    //pvVar6_f
 }
-const arr980 = []
-
-for (let i = 0; i < local_980.readUInt32LE(); i++) {
-    const strlen = reader.get_chunk(4).readUInt32LE()
-    const nameBuf = reader.get_chunk(strlen)
-
-    // quitar \0 si existe
-    const name = nameBuf.toString('ascii').replace(/\0.*$/, '')
-
-    const vec = reader.get_chunk(0x0c).readFloatLE(); // 12 bytes
-    const f1 = reader.get_chunk(4).readFloatLE()
-    const f2 = reader.get_chunk(4).readFloatLE()
-    const flags = reader.get_chunk(4).readUInt32LE()
-
-
-    arr980.push({
-        name,          // textura / recurso
-        vec,           // raw 12 bytes
-        scaleA: f1,
-        scaleB: f2,
-        flags
-    })
+console.log(JSON.stringify(exported))
+/*const vertices = pvVar6_f.map(i=>i.avStack_928)
+let objContent = ''
+for (const v of vertices) {
+    objContent += `v ${v.readFloatLE(0)} ${v.readFloatLE(4)} ${v.readFloatLE(8)}\n`;
 }
-const blocks7c = []
-console.log('this0x7c.readUInt32LE(): ', this0x7c.readUInt32LE())
-for (let i = 0; i < this0x7c.readUInt32LE(); i++) {
-    const type = reader.get_chunk(4).readUInt32LE()
 
-    const node = {
-        type,
-        raw: {
-            specific: {},
-            common1: null,
-            common2: null,
-            common3: null
-        }
-    }
+objContent += '\n';
 
-    // === BLOQUE ESPECÍFICO POR TIPO ===
-    if (type === 0) {
-        node.raw.specific.block44 = reader.get_chunk(0x0c) // +0x44
-        node.raw.specific.block50 = reader.get_chunk(4)    // +0x50
-        node.raw.specific.block54 = reader.get_chunk(4)    // +0x54
-    }
-    else if (type === 1) {
-        node.raw.specific.block44 = reader.get_chunk(0x0c) // +0x44
-        node.raw.specific.block50 = reader.get_chunk(0x0c) // +0x50
-        node.raw.specific.block5c = reader.get_chunk(4)    // +0x5c
-    }
-    else if (type === 2) {
-        node.raw.specific.block44 = reader.get_chunk(0x0c) // +0x44
-    }
-    else if (type === 3) {
-        // no lecturas específicas
-    }
-    else {
-       
-    }
-
-    // === BLOQUE COMÚN (SIEMPRE PRESENTE) ===
-    node.raw.common1 = reader.get_chunk(0x10) // +0x10
-    node.raw.common2 = reader.get_chunk(0x10) // +0x20
-    node.raw.common3 = reader.get_chunk(0x10) // +0x30
-
-    blocks7c.push(node)
-
-}
-*/
+fs.writeFileSync(output_file_name, objContent);*/

@@ -1,139 +1,208 @@
+// extractor.js
 const fs = require('fs');
-const path = require('path');
 
-// Ruta al archivo log (cámbiala si es necesario)
-const logPath = 'log.log';
-const outputDir = 'obj_output';
+function extractVerticesAndFacesFromJSON(data) {
+    let allVertices = [];
+    let allFaces = [];
 
-if (!fs.existsSync(outputDir)) {
-    fs.mkdirSync(outputDir);
-}
-
-const rawContent = fs.readFileSync(logPath, 'utf8');
-
-// El archivo es una lista JSON grande
-let data;
-try {
-    data = JSON.parse(rawContent);
-} catch (e) {
-    console.error('Error parseando JSON:', e.message);
-    process.exit(1);
-}
-
-let meshCount = 0;
-
-function traverse(obj, currentPath = [], objectName = 'unknown') {
-    if (Array.isArray(obj)) {
-        obj.forEach((item, i) => traverse(item, [...currentPath, i], objectName));
-    } else if (obj && typeof obj === 'object') {
-        // Detectar nombre de objeto/mesh
-        let newObjectName = objectName;
-        if (obj['0'] && obj['0'].type === 'Buffer' && obj['0'].data) {
-            try {
-                const nameBytes = Buffer.from(obj['0'].data);
-                const name = nameBytes.toString('ascii').replace(/\0/g, '').trim();
-                if (name.length > 0) newObjectName = name;
-            } catch (_) {}
-        }
-
-        // Buscar buffers
-        for (const key in obj) {
-            const value = obj[key];
-            if (value && value.type === 'Buffer' && Array.isArray(value.data)) {
-                const bytes = value.data;
-                const len = bytes.length;
-
-                if (len % 12 === 0 && len >= 12) {
-                    // Buffer de vértices (float32 little-endian)
-                    const vertexCount = len / 12;
-                    const vertices = [];
-                    const buffer = Buffer.from(bytes);
-
-                    for (let i = 0; i < vertexCount; i++) {
-                        const offset = i * 12;
-                        const x = buffer.readFloatLE(offset);
-                        const y = buffer.readFloatLE(offset + 4);
-                        const z = buffer.readFloatLE(offset + 8);
-                        vertices.push({ x, y, z });
-                    }
-
-                    // Guardar temporalmente para combinar con índices más tarde
-                    if (!globalMeshes[meshCount]) globalMeshes[meshCount] = { name: newObjectName };
-                    globalMeshes[meshCount].vertices = vertices;
-
-                } else if ((len % 2 === 0 || len % 4 === 0) && len >= 6) {
-                    // Buffer de índices (probablemente uint16, fallback uint32)
-                    let indices = [];
-                    const buffer = Buffer.from(bytes);
-
-                    if (len % 2 === 0) {
-                        // Intentar como uint16
-                        const indexCount = len / 2;
-                        let valid = true;
-                        for (let i = 0; i < indexCount; i++) {
-                            const idx = buffer.readUInt16LE(i * 2);
-                            if (idx >= 65535) { valid = false; break; } // valor demasiado alto para u16
-                            indices.push(idx);
+    // Función recursiva para buscar en el objeto
+    function traverse(obj, path = []) {
+        if (Array.isArray(obj)) {
+            obj.forEach((item, index) => {
+                traverse(item, [...path, index]);
+            });
+        } else if (obj && typeof obj === 'object') {
+            // Buscar buffers que puedan contener datos de geometría
+            if (obj.type === 'Buffer' && obj.data) {
+                const bufferPath = path.join('.');
+                
+                // Los vértices suelen estar en buffers específicos
+                // Basado en el patrón observado en el log
+                if (bufferPath.includes('28') || bufferPath.includes('this0x90') || bufferPath.includes('pvVar6')) {
+                    console.log(`Buffer encontrado en: ${bufferPath}, tamaño: ${obj.data.length}`);
+                    
+                    // Intentar interpretar como floats (3 floats por vértice = 12 bytes)
+                    if (obj.data.length % 12 === 0) {
+                        const vertices = [];
+                        for (let i = 0; i < obj.data.length; i += 12) {
+                            // Leer 3 floats (cada uno 4 bytes)
+                            const x = bytesToFloat(obj.data.slice(i, i+4));
+                            const y = bytesToFloat(obj.data.slice(i+4, i+8));
+                            const z = bytesToFloat(obj.data.slice(i+8, i+12));
+                            
+                            if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
+                                vertices.push([x, y, z]);
+                            }
                         }
-                        if (!valid) indices = []; // fallback
-                    }
-
-                    if (indices.length === 0 && len % 4 === 0) {
-                        // uint32
-                        const indexCount = len / 4;
-                        for (let i = 0; i < indexCount; i++) {
-                            indices.push(buffer.readUInt32LE(i * 4));
+                        
+                        if (vertices.length > 0) {
+                            console.log(`Encontrados ${vertices.length} vértices en ${bufferPath}`);
+                            allVertices.push(...vertices);
                         }
                     }
-
-                    if (indices.length >= 3) {
-                        if (!globalMeshes[meshCount]) globalMeshes[meshCount] = { name: newObjectName };
-                        globalMeshes[meshCount].indices = indices;
-
-                        // Si ya tenemos vértices, generar OBJ ahora
-                        if (globalMeshes[meshCount].vertices) {
-                            generateOBJ(globalMeshes[meshCount], meshCount);
-                            meshCount++;
+                    
+                    // Intentar interpretar como índices de caras (enteros de 2 bytes o 4 bytes)
+                    if (obj.data.length % 2 === 0) {
+                        const indices = [];
+                        for (let i = 0; i < obj.data.length; i += 2) {
+                            const index = (obj.data[i+1] << 8) | obj.data[i];
+                            indices.push(index);
+                        }
+                        
+                        if (indices.length > 0 && indices.some(idx => idx < 10000)) {
+                            console.log(`Encontrados ${indices.length} índices en ${bufferPath}`);
+                            
+                            // Crear caras (triángulos) a partir de los índices
+                            for (let i = 0; i < indices.length - 2; i += 3) {
+                                allFaces.push([
+                                    indices[i],
+                                    indices[i+1],
+                                    indices[i+2]
+                                ]);
+                            }
                         }
                     }
                 }
-            } else {
-                traverse(value, [...currentPath, key], newObjectName);
+            }
+            
+            // Buscar en propiedades del objeto
+            for (const key in obj) {
+                traverse(obj[key], [...path, key]);
             }
         }
     }
+
+    traverse(data);
+    
+    return { vertices: allVertices, faces: allFaces };
 }
 
-const globalMeshes = {};
+function bytesToFloat(bytes) {
+    if (bytes.length < 4) return NaN;
+    
+    // Asumir little-endian (común en datos 3D)
+    const buffer = Buffer.from(bytes.slice(0, 4));
+    return buffer.readFloatLE(0);
+}
 
-function generateOBJ(mesh, id) {
-    const { vertices, indices, name } = mesh;
-    const filename = path.join(outputDir, `${name.replace(/[^a-zA-Z0-9]/g, '_')}_${id}.obj`);
-
-    let objContent = `# Mesh extraído: ${name}\n`;
-    objContent += `# Vértices: ${vertices.length}\n`;
-    objContent += `# Caras: ${indices.length / 3}\n\n`;
-
-    // Vértices (OBJ empieza en índice 1)
-    for (const v of vertices) {
-        objContent += `v ${v.x.toFixed(6)} ${v.y.toFixed(6)} ${v.z.toFixed(6)}\n`;
-    }
-
-    objContent += '\n';
-
-    // Caras (asumiendo triángulos)
-    for (let i = 0; i < indices.length; i += 3) {
-        const a = indices[i] + 1;
-        const b = indices[i + 1] + 1;
-        const c = indices[i + 2] + 1;
-        objContent += `v ${a} ${b} ${c}\n`;
-    }
-
+function saveAsOBJ(vertices, faces, filename) {
+    let objContent = '# OBJ file extracted from JSON\n';
+    
+    // Escribir vértices
+    vertices.forEach(v => {
+        objContent += `v ${v[0]} ${v[1]} ${v[2]}\n`;
+    });
+    
+    // Escribir caras (sumar 1 porque OBJ indexa desde 1)
+    faces.forEach(f => {
+        if (f[0] < vertices.length && f[1] < vertices.length && f[2] < vertices.length) {
+            //objContent += `f ${f[0] + 1} ${f[1] + 1} ${f[2] + 1}\n`;
+        }
+    });
+    
     fs.writeFileSync(filename, objContent);
-    console.log(`Generado: ${filename} (${vertices.length} vértices, ${indices.length / 3} caras)`);
+    console.log(`OBJ guardado en: ${filename}`);
 }
 
-// Iniciar recorrido
-traverse(data);
+// Función principal para procesar el archivo
+function processLogFile(filename) {
+    try {
+        // Leer y parsear el JSON
+        const content = fs.readFileSync(filename, 'utf8');
+        const jsonData = JSON.parse(content);
+        
+        console.log('Procesando archivo JSON...');
+        
+        // Extraer vértices y caras
+        const { vertices, faces } = extractVerticesAndFacesFromJSON(jsonData);
+        
+        console.log(`Total vértices extraídos: ${vertices.length}`);
+        console.log(`Total caras extraídas: ${faces.length}`);
+        
+        // Guardar como OBJ
+        if (vertices.length > 0 && faces.length > 0) {
+            saveAsOBJ(vertices, faces, 'extracted_mesh.obj');
+        } else {
+            console.log('No se encontraron suficientes datos de malla.');
+        }
+        
+        // También guardar datos en JSON para inspección
+        fs.writeFileSync('extracted_data.json', JSON.stringify({
+            vertexCount: vertices.length,
+            faceCount: faces.length,
+            sampleVertices: vertices.slice(0, 10),
+            sampleFaces: faces.slice(0, 10)
+        }, null, 2));
+        
+    } catch (error) {
+        console.error('Error procesando el archivo:', error.message);
+    }
+}
 
-console.log(`\n¡Listo! Se generaron ${meshCount} archivos .obj en la carpeta "${outputDir}"`);
+// Versión alternativa específica para el patrón visto en el log
+function extractFromStructuredJSON(data) {
+    const vertices = [];
+    const faces = [];
+    
+    // Buscar en la estructura específica del log
+    function extractFromNode(node) {
+        if (!node) return;
+        
+        // Buscar buffers con datos de geometría
+        if (node.type === 'Buffer' && node.data) {
+            // Intentar interpretar como vértices (floats)
+            if (node.data.length % 12 === 0) {
+                for (let i = 0; i < node.data.length; i += 12) {
+                    const x = bytesToFloat(node.data.slice(i, i+4));
+                    const y = bytesToFloat(node.data.slice(i+4, i+8));
+                    const z = bytesToFloat(node.data.slice(i+8, i+12));
+                    
+                    if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
+                        vertices.push([x, y, z]);
+                    }
+                }
+            }
+            
+            // Intentar interpretar como índices (normalmente en buffers más pequeños)
+            if (node.data.length % 2 === 0 && node.data.length < 1000) {
+                const indices = [];
+                for (let i = 0; i < node.data.length; i += 2) {
+                    const index = (node.data[i+1] << 8) | obj.data[i];
+                    indices.push(index);
+                }
+                
+                // Crear triángulos
+                for (let i = 0; i < indices.length - 2; i++) {
+                    faces.push([indices[i], indices[i+1], indices[i+2]]);
+                }
+            }
+        }
+        
+        // Buscar recursivamente
+        if (typeof node === 'object') {
+            for (const key in node) {
+                if (node.hasOwnProperty(key)) {
+                    extractFromNode(node[key]);
+                }
+            }
+        } else if (Array.isArray(node)) {
+            node.forEach(item => extractFromNode(item));
+        }
+    }
+    
+    extractFromNode(data);
+    return { vertices, faces };
+}
+
+// Uso principal
+if (require.main === module) {
+    const filename = process.argv[2] || 'log.log';
+    processLogFile(filename);
+}
+
+module.exports = {
+    extractVerticesAndFacesFromJSON,
+    extractFromStructuredJSON,
+    processLogFile,
+    saveAsOBJ
+};
