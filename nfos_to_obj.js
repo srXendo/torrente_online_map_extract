@@ -1,5 +1,5 @@
 const fs = require('fs')
-const input_file_name = 'mp_b_anderguater.opt'
+const input_file_name = 'mp_do_plaza.opt'
 const output_file_name = 'test.opt.obj'
 
 if (!fs.existsSync(input_file_name)) {
