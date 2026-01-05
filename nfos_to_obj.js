@@ -1,5 +1,5 @@
 const fs = require('fs')
-const input_file_name = 'mp_dm_vertigo.opt'
+const input_file_name = 'mp_b_anderguater.opt'
 const output_file_name = 'test.opt.obj'
 
 if (!fs.existsSync(input_file_name)) {
@@ -226,9 +226,103 @@ const exported = {
     //pvVar6_c,
     //pvVar6_d,
     //pvVar6_e,
-    //pvVar6_f
+    //pvVar6_f*/
 }
-console.log(JSON.stringify(exported))
+function extractGeometry(pvVar6) {
+    const vertices = [];
+    const normals  = [];
+    const indices  = [];
+
+    let baseVertex = 0;
+
+    for (const model of pvVar6) {
+        for (const group of model.iVar9_b) {
+            for (const sub of group[0x08]) {
+                for (const mesh of sub[0x68]) {
+
+                    const flag        = mesh[0x00].readUInt32LE();
+                    const faceCount   = mesh[0x0c].readUInt32LE();
+                    const vertexCount = mesh[0x10].readUInt32LE();
+
+                    /* -------- INDICES -------- */
+                    if (mesh[0x18]) {
+                        const ib = mesh[0x18];
+                        for (let i = 0; i < faceCount; i++) {
+                            const a = ib.readUInt16LE(i * 6 + 0) + baseVertex;
+                            const b = ib.readUInt16LE(i * 6 + 2) + baseVertex;
+                            const c = ib.readUInt16LE(i * 6 + 4) + baseVertex;
+                            indices.push(a, b, c);
+                        }
+                    }
+
+                    /* -------- VERTICES + NORMALES -------- */
+                    if (mesh[0x1c]) {
+                        const vb = mesh[0x1c];
+                        const stride = (flag === 0) ? 0x20 : 0x28;
+
+                        for (let i = 0; i < vertexCount; i++) {
+                            const o = i * stride;
+
+                            const x  = vb.readFloatLE(o + 0);
+                            const y  = vb.readFloatLE(o + 4);
+                            const z  = vb.readFloatLE(o + 8);
+
+                            const nx = vb.readFloatLE(o + 12);
+                            const ny = vb.readFloatLE(o + 16);
+                            const nz = vb.readFloatLE(o + 20);
+
+                            vertices.push(x, y, z);
+                            normals.push(nx, ny, nz);
+                        }
+
+                        baseVertex += vertexCount;
+                    }
+                }
+            }
+        }
+    }
+
+    return { vertices, normals, indices };
+}
+function geometryToOBJ({ vertices, normals, indices }) {
+    let obj = '';
+    
+    /* -------- VERTICES -------- */
+    for (let i = 0; i < vertices.length; i += 3) {
+        obj += `v ${vertices[i]} ${vertices[i+1]} ${vertices[i+2]}\n`;
+    }
+
+    /* -------- NORMALES -------- */
+    for (let i = 0; i < normals.length; i += 3) {
+        obj += `vn ${normals[i]} ${normals[i+1]} ${normals[i+2]}\n`;
+    }
+
+    /* -------- CARAS -------- */
+    for (let i = 0; i < indices.length; i += 3) {
+        const a = indices[i]     + 1;
+        const b = indices[i + 1] + 1;
+        const c = indices[i + 2] + 1;
+
+        // v//vn (sin UVs)
+        obj += `f ${a}//${a} ${b}//${b} ${c}//${c}\n`;
+    }
+
+    return obj;
+}
+
+const geometry = extractGeometry(pvVar6);
+
+const objText  = geometryToOBJ(geometry);
+
+// Node.js
+require('fs').writeFileSync('test.opt.obj', objText);
+
+// Browser
+// console.log(objText);
+
+console.log(geometry.vertices.length / 3, "vertices");
+console.log(geometry.normals.length  / 3, "normals");
+console.log(geometry.indices.length  / 3, "triangles");
 /*const vertices = pvVar6_f.map(i=>i.avStack_928)
 let objContent = ''
 for (const v of vertices) {
