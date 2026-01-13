@@ -1,5 +1,5 @@
 const fs = require('fs')
-const input_file_name = 'mp_do_plaza.opt'
+const input_file_name = 'mp_dm_industrial.opt'
 const output_file_name = 'test.opt.obj'
 
 if (!fs.existsSync(input_file_name)) {
@@ -219,7 +219,7 @@ function FUN_FIRSTCALL_10055c00(){
     }
     
 }
-
+console.log('reader.pointer: ', reader.pointer, 'file_length: ', input_file.length)
 const exported = {
     pvVar6,
     pvVar6_b,
