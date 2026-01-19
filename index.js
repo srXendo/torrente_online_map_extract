@@ -269,217 +269,499 @@ const exported = {
     //pvVar6_e,
     //pvVar6_f*/
 }
-function extractGeometry(pvVar6, pvVar6_b, pvVar6_d = [], pvVar6_f = []) {
+function extractGeometry(pvVar6, pvVar6_b, pvVar6_d = [], pvVar6_f = [], pvVar6_g = null) {
     const vertices = [];
     const normals = [];
     const indices = [];
-
-    let baseVertex = 0;
+    const uv = [];
     
-    // Almacenar transformaciones por modelo/grupo para aplicarlas después
-    const transformations = [];
+    // Estructuras para tracking
+    const modelInstances = []; // Instancias de modelos con transformaciones
+    const geometryCache = new Map(); // Cache de geometría por modelo base
+    let globalVertexOffset = 0;
 
-    // Función para extraer matriz 4x4 de un buffer
-    function extractMatrix4x4(bufferData) {
-        if (!bufferData || bufferData.length < 64) return null;
-        
-        const matrix = new Float32Array(16);
-        for (let i = 0; i < 16; i++) {
-            matrix[i] = bufferData.readFloatLE(i * 4);
-        }
-        return matrix;
-    }
-
-    // Función para extraer vector 3 de un buffer
-    function extractVector3(bufferData, offset = 0) {
-        if (!bufferData || bufferData.length < offset + 12) return null;
-        
-        return [
-            bufferData.readFloatLE(offset + 0),
-            bufferData.readFloatLE(offset + 4),
-            bufferData.readFloatLE(offset + 8)
-        ];
-    }
-
-    // Procesar transformaciones de pvVar6_d
+    // 1. Primero extraer TODA la geometría base (sin transformaciones)
+    const baseGeometries = extractBaseGeometry(pvVar6, pvVar6_b);
+    
+    // 2. Procesar transformaciones globales (pvVar6_d)
+    const globalTransforms = [];
     if (pvVar6_d && pvVar6_d.length > 0) {
-        console.log(`Procesando ${pvVar6_d.length} transformaciones de pvVar6_d`);
-        
-        for (const transformObj of pvVar6_d) {
-            const transformData = {
-                matrix: null,
-                position: null
-            };
-            
-            // Extraer matriz de transformación (probablemente en "16" o "32")
-            if (transformObj["16"] && transformObj["16"].data) {
-                transformData.matrix = extractMatrix4x4(Buffer.from(transformObj["16"].data));
-            }
-            
-            if (transformObj["32"] && transformObj["32"].data) {
-                // Puede ser otra matriz o datos adicionales
-                const vec = extractVector3(Buffer.from(transformObj["32"].data));
-                if (vec) transformData.position = vec;
-            }
-            
-            transformations.push(transformData);
+        for (let i = 0; i < pvVar6_d.length; i++) {
+            const transform = extractTransformFromBuffer(pvVar6_d[i]);
+            if (transform) globalTransforms.push(transform);
         }
     }
 
-    // Procesar datos adicionales de pvVar6_f
-    const additionalPositions = [];
+    // 3. Procesar OBBs (pvVar6_f)
+    const obbTransforms = [];
     if (pvVar6_f && pvVar6_f.length > 0) {
-        console.log(`Procesando ${pvVar6_f.length} datos adicionales de pvVar6_f`);
-        
-        for (const additionalData of pvVar6_f) {
-            if (additionalData.avStack_928 && additionalData.avStack_928.data) {
-                const pos = extractVector3(Buffer.from(additionalData.avStack_928.data));
-                if (pos) additionalPositions.push(pos);
-            }
-            
-            if (additionalData.avStack_910 && additionalData.avStack_910.data) {
-                // avStack_910 parece contener matrices de transformación 4x4
-                const matrix = extractMatrix4x4(Buffer.from(additionalData.avStack_910.data));
-                if (matrix) {
-                    transformations.push({
-                        matrix: matrix,
-                        position: null
-                    });
-                }
-            }
+        for (let i = 0; i < pvVar6_f.length; i++) {
+            const obb = extractOBBFromBuffer(pvVar6_f[i]);
+            if (obb) obbTransforms.push(obb);
         }
     }
 
-    // Función auxiliar para procesar un array de modelos
-    function processModelArray(modelArray, transformIndex = 0) {
-        if (!modelArray) return;
+    // 4. Procesar jerarquía (pvVar6_g) - CREAR INSTANCIAS
+    function processHierarchyForInstances(node, parentMatrix = null, instancePath = []) {
+        if (!node) return;
+        
+        // Extraer información del nodo
+        const localMatrix = extractMatrixFromBuffer(node.local_120) || createIdentityMatrix();
+        const localPosition = extractVectorFromBuffer(node.local_12c) || [0, 0, 0];
+        const nodeType = extractUInt32FromBuffer(node.piVar1) || 0;
+        const modelIndices = extractIndicesFromBufferArray(node.local_13c) || [];
+        
+        // Calcular matriz mundial para esta instancia
+        let worldMatrix;
+        if (parentMatrix) {
+            worldMatrix = multiplyMatrices(parentMatrix, localMatrix);
+        } else {
+            worldMatrix = localMatrix;
+        }
+        
+        // Aplicar posición local si existe
+        if (localPosition && (localPosition[0] !== 0 || localPosition[1] !== 0 || localPosition[2] !== 0)) {
+            const positionMatrix = createTranslationMatrix(localPosition[0], localPosition[1], localPosition[2]);
+            worldMatrix = multiplyMatrices(worldMatrix, positionMatrix);
+        }
+        
+        // Para cada índice de modelo en este nodo, crear una instancia
+        for (const modelIndex of modelIndices) {
+            if (modelIndex >= 0 && modelIndex < baseGeometries.length) {
+                const instance = {
+                    modelIndex: modelIndex,
+                    transform: worldMatrix,
+                    nodeType: nodeType,
+                    instancePath: [...instancePath, modelIndex],
+                    hasTransform: true
+                };
+                modelInstances.push(instance);
+            }
+        }
+        
+        // Procesar hijos recursivamente
+        if (node.pvVar4 && Array.isArray(node.pvVar4)) {
+            const childPath = [...instancePath, 'c'];
+            for (const child of node.pvVar4) {
+                processHierarchyForInstances(child, worldMatrix, childPath);
+            }
+        }
+    }
+    
+    // Procesar la jerarquía principal
+    if (pvVar6_g) {
+        processHierarchyForInstances(pvVar6_g);
+    }
+    
+    // 5. Si no hay jerarquía, crear instancias basadas en transformaciones globales
+    if (modelInstances.length === 0) {
+        for (let i = 0; i < baseGeometries.length; i++) {
+            let transform = createIdentityMatrix();
+            
+            // Aplicar transformación global si existe
+            if (i < globalTransforms.length && globalTransforms[i]) {
+                transform = multiplyMatrices(transform, globalTransforms[i].matrix || createIdentityMatrix());
+            }
+            
+            // Aplicar transformación OBB si existe
+            if (i < obbTransforms.length && obbTransforms[i] && obbTransforms[i].matrix) {
+                transform = multiplyMatrices(transform, obbTransforms[i].matrix);
+            }
+            
+            modelInstances.push({
+                modelIndex: i,
+                transform: transform,
+                nodeType: 0,
+                instancePath: [i],
+                hasTransform: true
+            });
+        }
+    }
 
-        for (const model of modelArray) {
-            if (!model.iVar9_b) continue;
+    // 6. PROCESAR INSTANCIAS (puede haber múltiples instancias del mismo modelo)
+    console.log(`Procesando ${modelInstances.length} instancias de ${baseGeometries.length} modelos base`);
+    
+    // Contador de instancias por modelo
+    const instanceCountPerModel = new Map();
+    
+    for (let instanceIndex = 0; instanceIndex < modelInstances.length; instanceIndex++) {
+        const instance = modelInstances[instanceIndex];
+        const modelIndex = instance.modelIndex;
+        
+        // Contar instancias de este modelo
+        const currentCount = instanceCountPerModel.get(modelIndex) || 0;
+        instanceCountPerModel.set(modelIndex, currentCount + 1);
+        
+        // Obtener geometría base
+        const baseGeometry = baseGeometries[modelIndex];
+        if (!baseGeometry) continue;
+        
+        const instanceTransform = instance.transform || createIdentityMatrix();
+        
+        // Aplicar transformaciones adicionales basadas en el índice de instancia
+        let finalTransform = instanceTransform;
+        
+        // Aplicar transformación global específica para esta instancia
+        if (instanceIndex < globalTransforms.length && globalTransforms[instanceIndex]) {
+            finalTransform = multiplyMatrices(finalTransform, globalTransforms[instanceIndex].matrix || createIdentityMatrix());
+        }
+        
+        // Aplicar transformación OBB específica para esta instancia
+        if (instanceIndex < obbTransforms.length && obbTransforms[instanceIndex] && obbTransforms[instanceIndex].matrix) {
+            finalTransform = multiplyMatrices(finalTransform, obbTransforms[instanceIndex].matrix);
+        }
+        
+        // Procesar vértices de esta instancia
+        const vertexOffset = globalVertexOffset;
+        
+        // Transformar y agregar vértices
+        for (let i = 0; i < baseGeometry.vertices.length; i += 3) {
+            const x = baseGeometry.vertices[i];
+            const y = baseGeometry.vertices[i + 1];
+            const z = baseGeometry.vertices[i + 2];
+            
+            const transformed = transformPoint(finalTransform, x, y, z);
+            vertices.push(transformed.x, transformed.y, transformed.z);
+        }
+        
+        // Transformar y agregar normales
+        for (let i = 0; i < baseGeometry.normals.length; i += 3) {
+            const nx = baseGeometry.normals[i];
+            const ny = baseGeometry.normals[i + 1];
+            const nz = baseGeometry.normals[i + 2];
+            
+            const transformed = transformNormal(finalTransform, nx, ny, nz);
+            normals.push(transformed.x, transformed.y, transformed.z);
+        }
+        
+        // Agregar UVs (si existen)
+        if (baseGeometry.uv && baseGeometry.uv.length > 0) {
+            uv.push(...baseGeometry.uv);
+        } else {
+            // Agregar UVs por defecto si no existen
+            for (let i = 0; i < baseGeometry.vertices.length / 3; i++) {
+                uv.push(0, 0);
+            }
+        }
+        
+        // Agregar índices con offset
+        for (const index of baseGeometry.indices) {
+            indices.push(index + vertexOffset);
+        }
+        
+        globalVertexOffset += baseGeometry.vertices.length / 3;
+        
+        // DEBUG: Información por instancia
+        if (instanceCountPerModel.get(modelIndex) > 1) {
+            console.log(`Modelo ${modelIndex} instanciado ${instanceCountPerModel.get(modelIndex)} veces`);
+        }
+    }
 
-            for (const group of model.iVar9_b) {
-                if (!group[0x08]) continue;
-
-                for (const sub of group[0x08]) {
-                    if (!sub[0x68]) continue;
-
-                    for (const mesh of sub[0x68]) {
-                        const flag = mesh[0x00]?.readUInt32LE?.() ?? 0;
-                        const faceCount = mesh[0x0c]?.readUInt32LE?.() ?? 0;
-                        const vertexCount = mesh[0x10]?.readUInt32LE?.() ?? 0;
-
-                        /* -------- INDICES -------- */
-                        if (mesh[0x18]) {
-                            const ib = mesh[0x18];
-                            for (let i = 0; i < faceCount; i++) {
-                                const a = ib.readUInt16LE(i * 6 + 0) + baseVertex;
-                                const b = ib.readUInt16LE(i * 6 + 2) + baseVertex;
-                                const c = ib.readUInt16LE(i * 6 + 4) + baseVertex;
-                                indices.push(a, b, c);
-                            }
-                        }
-
-                        /* -------- VERTICES + NORMALES -------- */
-                        if (mesh[0x1c]) {
-                            const vb = mesh[0x1c];
-                            const stride = (flag === 0) ? 0x20 : 0x28;
-
-                            for (let i = 0; i < vertexCount; i++) {
-                                const o = i * stride;
-
-                                let x = vb.readFloatLE(o + 0);
-                                let y = vb.readFloatLE(o + 4);
-                                let z = vb.readFloatLE(o + 8);
-
-                                let nx = vb.readFloatLE(o + 12);
-                                let ny = vb.readFloatLE(o + 16);
-                                let nz = vb.readFloatLE(o + 20);
-
-                                // Aplicar transformaciones si existen
-                                if (transformations.length > 0 && transformIndex < transformations.length) {
-                                    const transform = transformations[transformIndex];
-                                    
-                                    if (transform.matrix) {
-                                        // Aplicar transformación matricial (simplificada - solo posición)
-                                        // En una implementación completa, multiplicaríamos la matriz 4x4
-                                        if (transform.position) {
-                                            x += transform.position[0];
-                                            y += transform.position[1];
-                                            z += transform.position[2];
-                                        }
+    // 7. Funciones auxiliares
+    function extractBaseGeometry(pvVar6, pvVar6_b) {
+        const geometries = [];
+        
+        function processModelArray(modelArray) {
+            if (!modelArray) return 0;
+            
+            let modelCount = 0;
+            
+            for (const model of modelArray) {
+                if (!model.iVar9_b) continue;
+                
+                for (const group of model.iVar9_b) {
+                    if (!group[0x08]) continue;
+                    
+                    for (const sub of group[0x08]) {
+                        if (!sub[0x68]) continue;
+                        
+                        for (const mesh of sub[0x68]) {
+                            const flag = mesh[0x00]?.readUInt32LE?.() ?? 0;
+                            const faceCount = mesh[0x0c]?.readUInt32LE?.() ?? 0;
+                            const vertexCount = mesh[0x10]?.readUInt32LE?.() ?? 0;
+                            
+                            const geometry = {
+                                vertices: [],
+                                normals: [],
+                                indices: [],
+                                uv: []
+                            };
+                            
+                            // Extraer índices
+                            if (mesh[0x18] && faceCount > 0) {
+                                const indexBuffer = mesh[0x18];
+                                const vertexCountEst = Math.max(vertexCount, 65535);
+                                const is16Bit = (indexBuffer.length / faceCount) <= 6;
+                                
+                                for (let i = 0; i < faceCount; i++) {
+                                    if (is16Bit) {
+                                        const a = indexBuffer.readUInt16LE(i * 6 + 0);
+                                        const b = indexBuffer.readUInt16LE(i * 6 + 2);
+                                        const c = indexBuffer.readUInt16LE(i * 6 + 4);
+                                        geometry.indices.push(a, b, c);
+                                    } else {
+                                        const a = indexBuffer.readUInt32LE(i * 12 + 0);
+                                        const b = indexBuffer.readUInt32LE(i * 12 + 4);
+                                        const c = indexBuffer.readUInt32LE(i * 12 + 8);
+                                        geometry.indices.push(a, b, c);
                                     }
                                 }
-
-                                // Añadir posiciones adicionales si corresponden
-                                if (additionalPositions.length > 0 && i < additionalPositions.length) {
-                                    const addPos = additionalPositions[i];
-                                    x += addPos[0];
-                                    y += addPos[1];
-                                    z += addPos[2];
-                                }
-
-                                vertices.push(x, y, z);
-                                normals.push(nx, ny, nz);
                             }
-
-                            baseVertex += vertexCount;
-                            transformIndex++; // Mover a la siguiente transformación para el próximo mesh
+                            
+                            // Extraer vértices, normales y UVs
+                            if (mesh[0x1c] && vertexCount > 0) {
+                                const vertexBuffer = mesh[0x1c];
+                                const stride = Math.floor(vertexBuffer.length / vertexCount);
+                                
+                                for (let i = 0; i < vertexCount; i++) {
+                                    const offset = i * stride;
+                                    
+                                    // Posición
+                                    const x = vertexBuffer.readFloatLE(offset + 0);
+                                    const y = vertexBuffer.readFloatLE(offset + 4);
+                                    const z = vertexBuffer.readFloatLE(offset + 8);
+                                    geometry.vertices.push(x, y, z);
+                                    
+                                    // Normal
+                                    const nx = vertexBuffer.readFloatLE(offset + 12);
+                                    const ny = vertexBuffer.readFloatLE(offset + 16);
+                                    const nz = vertexBuffer.readFloatLE(offset + 20);
+                                    geometry.normals.push(nx, ny, nz);
+                                    
+                                    // UV (si existe espacio)
+                                    if (stride >= 32) {
+                                        const u = vertexBuffer.readFloatLE(offset + 24);
+                                        const v = vertexBuffer.readFloatLE(offset + 28);
+                                        geometry.uv.push(u, v);
+                                    } else {
+                                        geometry.uv.push(0, 0);
+                                    }
+                                }
+                            }
+                            
+                            geometries.push(geometry);
+                            modelCount++;
                         }
                     }
                 }
             }
+            
+            return modelCount;
         }
+        
+        console.log("Extrayendo geometría base...");
+        const primaryCount = processModelArray(pvVar6);
+        const secondaryCount = processModelArray(pvVar6_b);
+        
+        console.log(`Encontrados ${geometries.length} modelos base (${primaryCount} primarios, ${secondaryCount} secundarios)`);
+        return geometries;
+    }
+    
+    // Funciones de transformación (igual que antes pero optimizadas)
+    function extractTransformFromBuffer(bufferObj) {
+        if (!bufferObj || !bufferObj.data) return null;
+        const buffer = Buffer.from(bufferObj.data);
+        if (buffer.length < 64) return null;
+        const matrix = new Float32Array(16);
+        for (let i = 0; i < 16; i++) matrix[i] = buffer.readFloatLE(i * 4);
+        return { matrix };
+    }
+    
+    function extractOBBFromBuffer(bufferObj) {
+        if (!bufferObj) return null;
+        const result = {};
+        if (bufferObj.avStack_910?.data) {
+            const buffer = Buffer.from(bufferObj.avStack_910.data);
+            if (buffer.length >= 64) {
+                result.matrix = new Float32Array(16);
+                for (let i = 0; i < 16; i++) result.matrix[i] = buffer.readFloatLE(i * 4);
+            }
+        }
+        if (bufferObj.avStack_928?.data) {
+            const buffer = Buffer.from(bufferObj.avStack_928.data);
+            if (buffer.length >= 12) {
+                result.position = [buffer.readFloatLE(0), buffer.readFloatLE(4), buffer.readFloatLE(8)];
+            }
+        }
+        return result;
+    }
+    
+    function extractMatrixFromBuffer(bufferObj) {
+        if (!bufferObj?.data) return createIdentityMatrix();
+        const buffer = Buffer.from(bufferObj.data);
+        if (buffer.length < 64) return createIdentityMatrix();
+        const matrix = new Float32Array(16);
+        for (let i = 0; i < 16; i++) matrix[i] = buffer.readFloatLE(i * 4);
+        return matrix;
+    }
+    
+    function extractVectorFromBuffer(bufferObj) {
+        if (!bufferObj?.data) return [0, 0, 0];
+        const buffer = Buffer.from(bufferObj.data);
+        if (buffer.length < 12) return [0, 0, 0];
+        return [buffer.readFloatLE(0), buffer.readFloatLE(4), buffer.readFloatLE(8)];
+    }
+    
+    function extractUInt32FromBuffer(bufferObj) {
+        if (!bufferObj?.data) return 0;
+        const buffer = Buffer.from(bufferObj.data);
+        return buffer.length >= 4 ? buffer.readUInt32LE(0) : 0;
+    }
+    
+    function extractIndicesFromBufferArray(bufferArray) {
+        if (!Array.isArray(bufferArray)) return [];
+        const indices = [];
+        for (const bufferObj of bufferArray) {
+            if (bufferObj?.data) {
+                const buffer = Buffer.from(bufferObj.data);
+                if (buffer.length >= 4) indices.push(buffer.readUInt32LE(0));
+            }
+        }
+        return indices;
+    }
+    
+    function createIdentityMatrix() {
+        const m = new Float32Array(16);
+        m[0] = m[5] = m[10] = m[15] = 1.0;
+        return m;
+    }
+    
+    function createTranslationMatrix(x, y, z) {
+        const m = createIdentityMatrix();
+        m[12] = x;
+        m[13] = y;
+        m[14] = z;
+        return m;
+    }
+    
+    function multiplyMatrices(a, b) {
+        const out = new Float32Array(16);
+        for (let i = 0; i < 4; i++) {
+            for (let j = 0; j < 4; j++) {
+                out[i * 4 + j] = 0;
+                for (let k = 0; k < 4; k++) {
+                    out[i * 4 + j] += a[i * 4 + k] * b[k * 4 + j];
+                }
+            }
+        }
+        return out;
+    }
+    
+    function transformPoint(m, x, y, z) {
+        const w = m[3] * x + m[7] * y + m[11] * z + m[15];
+        return {
+            x: (m[0] * x + m[4] * y + m[8] * z + m[12]) / (w || 1),
+            y: (m[1] * x + m[5] * y + m[9] * z + m[13]) / (w || 1),
+            z: (m[2] * x + m[6] * y + m[10] * z + m[14]) / (w || 1)
+        };
+    }
+    
+    function transformNormal(m, nx, ny, nz) {
+        // Para normales, necesitamos la inversa transpuesta
+        // Simplificado: asumimos que la matriz no tiene escala no uniforme
+        const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+        if (len > 0) {
+            nx /= len;
+            ny /= len;
+            nz /= len;
+        }
+        return {
+            x: m[0] * nx + m[4] * ny + m[8] * nz,
+            y: m[1] * nx + m[5] * ny + m[9] * nz,
+            z: m[2] * nx + m[6] * ny + m[10] * nz
+        };
     }
 
-    // Procesar ambas fuentes de datos
-    let transformOffset = 0;
-    transformOffset = processModelArray(pvVar6, transformOffset) || 0;
-    processModelArray(pvVar6_b, transformOffset);
-
-    return { vertices, normals, indices, transformations, additionalPositions };
+    return {
+        vertices,
+        normals,
+        indices,
+        uv,
+        stats: {
+            totalVertices: vertices.length / 3,
+            totalFaces: indices.length / 3,
+            baseModels: baseGeometries.length,
+            instances: modelInstances.length,
+            instanceCounts: Array.from(instanceCountPerModel.entries()),
+            repeatedModels: Array.from(instanceCountPerModel.entries()).filter(([_, count]) => count > 1).length
+        },
+        baseGeometries,
+        instances: modelInstances
+    };
 }
 
-function geometryToOBJ({ vertices, normals, indices }) {
-    let obj = '';
-
-    /* -------- VERTICES -------- */
+// Función para exportar a OBJ (maneja instancias)
+function geometryToOBJ({ vertices, normals, indices, uv = [] }) {
+    let obj = '# Exported from geometry extractor\n';
+    obj += '# Supports model instancing\n\n';
+    
+    // Vértices
+    obj += '# Vertices\n';
     for (let i = 0; i < vertices.length; i += 3) {
-        obj += `v ${vertices[i].toFixed(6)} ${vertices[i + 1].toFixed(6)} ${vertices[i + 2].toFixed(6)}\n`;
+        obj += `v ${vertices[i].toFixed(6)} ${vertices[i + 1].toFixed(6)} ${-vertices[i + 2].toFixed(6)}\n`;
     }
-
-    /* -------- NORMALES -------- */
+    
+    // UVs
+    if (uv.length > 0) {
+        obj += '\n# Texture coordinates\n';
+        for (let i = 0; i < uv.length; i += 2) {
+            obj += `vt ${uv[i].toFixed(6)} ${1.0 - uv[i + 1].toFixed(6)}\n`; // Flip V coordinate
+        }
+    }
+    
+    // Normales
+    obj += '\n# Normals\n';
     for (let i = 0; i < normals.length; i += 3) {
-        obj += `vn ${normals[i].toFixed(6)} ${normals[i + 1].toFixed(6)} ${normals[i + 2].toFixed(6)}\n`;
+        // Normalizar normales
+        const nx = normals[i];
+        const ny = normals[i + 1];
+        const nz = normals[i + 2];
+        const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+        if (len > 0) {
+            obj += `vn ${(nx/len).toFixed(6)} ${(ny/len).toFixed(6)} ${-(nz/len).toFixed(6)}\n`;
+        } else {
+            obj += `vn ${nx.toFixed(6)} ${ny.toFixed(6)} ${-nz.toFixed(6)}\n`;
+        }
     }
-
-    /* -------- CARAS -------- */
+    
+    // Caras
+    obj += '\n# Faces\n';
+    const hasUV = uv.length > 0;
     for (let i = 0; i < indices.length; i += 3) {
         const a = indices[i] + 1;
         const b = indices[i + 1] + 1;
         const c = indices[i + 2] + 1;
-
-        // v//vn (sin UVs)
-        obj += `f ${a}//${a} ${b}//${b} ${c}//${c}\n`;
+        
+        if (hasUV) {
+            obj += `f ${a}/${a}/${a} ${b}/${b}/${b} ${c}/${c}/${c}\n`;
+        } else {
+            obj += `f ${a}//${a} ${b}//${b} ${c}//${c}\n`;
+        }
     }
-
+    
     return obj;
 }
 
-// Llamar a la función con todas las variables
-const geometry = extractGeometry(pvVar6, pvVar6_b, pvVar6_d, pvVar6_f);
-const objText = geometryToOBJ(geometry);
-
-// Node.js
-require('fs').writeFileSync(output_file_name, objText);
-
-// Browser
-// console.log(objText);
-
-/*console.log("Resumen de extracción:");
-console.log("-" .repeat(40));
-console.log(`${geometry.vertices.length / 3} vértices extraídos`);
-console.log(`${geometry.normals.length / 3} normales extraídas`);
-console.log(`${geometry.indices.length / 3} triángulos extraídos`);
-console.log(`${geometry.transformations.length} transformaciones aplicadas`);
-console.log(`${geometry.additionalPositions.length} posiciones adicionales incluidas`);
-console.log("-" .repeat(40));*/
+// Ejemplo de uso
+function processAndExport() {
+    const geometry = extractGeometry(pvVar6, pvVar6_b, pvVar6_d, pvVar6_f, pvVar6_g);
+    
+    console.log('=== ESTADÍSTICAS ===');
+    console.log(`Vértices totales: ${geometry.stats.totalVertices}`);
+    console.log(`Caras totales: ${geometry.stats.totalFaces}`);
+    console.log(`Modelos base: ${geometry.stats.baseModels}`);
+    console.log(`Instancias: ${geometry.stats.instances}`);
+    console.log(`Modelos repetidos: ${geometry.stats.repeatedModels}`);
+    
+    // Mostrar modelos con múltiples instancias
+    geometry.stats.instanceCounts.forEach(([modelIndex, count]) => {
+        if (count > 1) {
+            console.log(`  Modelo ${modelIndex}: ${count} instancias`);
+        }
+    });
+    
+    const objText = geometryToOBJ(geometry);
+    require('fs').writeFileSync(output_file_name, objText);
+    console.log('Archivo OBJ guardado como output_with_instances.obj');
+}
+processAndExport()
