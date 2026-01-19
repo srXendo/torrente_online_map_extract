@@ -129,7 +129,48 @@ for(let i = 0; i < this0x88.readUInt32LE(); i++){
         avStack_928
     })
 }
+const pvVar6_g = FUN_LASTCALL_10058b40()
+function FUN_LASTCALL_10058b40(){
+    let local_120 = reader.get_chunk(0x40);
+    let local_12c = reader.get_chunk(0xc);
 
+    let piVar1 = reader.get_chunk(0x4);
+    let local_13c = []
+    for(let i = 0; i < piVar1.readUInt32LE(); i++){
+        local_13c.push(reader.get_chunk(0x4));
+    }
+    let local_138 = reader.get_chunk(4);
+    let second_for = []
+    for(let i = 0; i < local_138.readUInt32LE(); i++){
+        let local_13c_2 = reader.get_chunk(4)
+        second_for.push(local_13c_2)
+    }
+    let pvVar2_0xf0 = reader.get_chunk(4);
+    let pvVar2_0xf4 = 0
+    if(pvVar2_0xf0.readUInt32LE() > 0){
+
+        // Leemos 'count * 4' bytes y los guardamos en pvVar2_0xf4
+        pvVar2_0xf4 = reader.get_chunk(pvVar2_0xf0.readUInt32LE() * 4);
+
+    }
+    let pvVar2_0xd0 = reader.get_chunk(4);
+    let pvVar4 = []
+    for(let i = 0; i < pvVar2_0xd0.readUInt32LE(); i++){
+        pvVar4.push(FUN_LASTCALL_10058b40())
+    }
+    return {
+        local_120,
+        local_12c,
+        piVar1,
+        local_13c,
+        local_138,
+        second_for,
+        pvVar2_0xf0,
+        pvVar2_0xf4,
+        pvVar2_0xd0,
+        pvVar4,
+    }
+}
 function FUN_FIRSTCALL_10055c00(){
     
     const piVar1 = reader.get_chunk(4);
@@ -219,7 +260,7 @@ function FUN_FIRSTCALL_10055c00(){
     }
     
 }
-console.log('reader.pointer: ', reader.pointer, 'file_length: ', input_file.length)
+console.log('reader.pointer: ', reader.pointer, 'file_length: ', input_file.length, '\n pvVar6_g', JSON.stringify(pvVar6_g))
 const exported = {
     pvVar6,
     pvVar6_b,
@@ -228,80 +269,194 @@ const exported = {
     //pvVar6_e,
     //pvVar6_f*/
 }
-function extractGeometry(pvVar6) {
+function extractGeometry(pvVar6, pvVar6_b, pvVar6_d = [], pvVar6_f = []) {
     const vertices = [];
-    const normals  = [];
-    const indices  = [];
+    const normals = [];
+    const indices = [];
 
     let baseVertex = 0;
+    
+    // Almacenar transformaciones por modelo/grupo para aplicarlas después
+    const transformations = [];
 
-    for (const model of pvVar6) {
-        for (const group of model.iVar9_b) {
-            for (const sub of group[0x08]) {
-                for (const mesh of sub[0x68]) {
+    // Función para extraer matriz 4x4 de un buffer
+    function extractMatrix4x4(bufferData) {
+        if (!bufferData || bufferData.length < 64) return null;
+        
+        const matrix = new Float32Array(16);
+        for (let i = 0; i < 16; i++) {
+            matrix[i] = bufferData.readFloatLE(i * 4);
+        }
+        return matrix;
+    }
 
-                    const flag        = mesh[0x00].readUInt32LE();
-                    const faceCount   = mesh[0x0c].readUInt32LE();
-                    const vertexCount = mesh[0x10].readUInt32LE();
+    // Función para extraer vector 3 de un buffer
+    function extractVector3(bufferData, offset = 0) {
+        if (!bufferData || bufferData.length < offset + 12) return null;
+        
+        return [
+            bufferData.readFloatLE(offset + 0),
+            bufferData.readFloatLE(offset + 4),
+            bufferData.readFloatLE(offset + 8)
+        ];
+    }
 
-                    /* -------- INDICES -------- */
-                    if (mesh[0x18]) {
-                        const ib = mesh[0x18];
-                        for (let i = 0; i < faceCount; i++) {
-                            const a = ib.readUInt16LE(i * 6 + 0) + baseVertex;
-                            const b = ib.readUInt16LE(i * 6 + 2) + baseVertex;
-                            const c = ib.readUInt16LE(i * 6 + 4) + baseVertex;
-                            indices.push(a, b, c);
+    // Procesar transformaciones de pvVar6_d
+    if (pvVar6_d && pvVar6_d.length > 0) {
+        console.log(`Procesando ${pvVar6_d.length} transformaciones de pvVar6_d`);
+        
+        for (const transformObj of pvVar6_d) {
+            const transformData = {
+                matrix: null,
+                position: null
+            };
+            
+            // Extraer matriz de transformación (probablemente en "16" o "32")
+            if (transformObj["16"] && transformObj["16"].data) {
+                transformData.matrix = extractMatrix4x4(Buffer.from(transformObj["16"].data));
+            }
+            
+            if (transformObj["32"] && transformObj["32"].data) {
+                // Puede ser otra matriz o datos adicionales
+                const vec = extractVector3(Buffer.from(transformObj["32"].data));
+                if (vec) transformData.position = vec;
+            }
+            
+            transformations.push(transformData);
+        }
+    }
+
+    // Procesar datos adicionales de pvVar6_f
+    const additionalPositions = [];
+    if (pvVar6_f && pvVar6_f.length > 0) {
+        console.log(`Procesando ${pvVar6_f.length} datos adicionales de pvVar6_f`);
+        
+        for (const additionalData of pvVar6_f) {
+            if (additionalData.avStack_928 && additionalData.avStack_928.data) {
+                const pos = extractVector3(Buffer.from(additionalData.avStack_928.data));
+                if (pos) additionalPositions.push(pos);
+            }
+            
+            if (additionalData.avStack_910 && additionalData.avStack_910.data) {
+                // avStack_910 parece contener matrices de transformación 4x4
+                const matrix = extractMatrix4x4(Buffer.from(additionalData.avStack_910.data));
+                if (matrix) {
+                    transformations.push({
+                        matrix: matrix,
+                        position: null
+                    });
+                }
+            }
+        }
+    }
+
+    // Función auxiliar para procesar un array de modelos
+    function processModelArray(modelArray, transformIndex = 0) {
+        if (!modelArray) return;
+
+        for (const model of modelArray) {
+            if (!model.iVar9_b) continue;
+
+            for (const group of model.iVar9_b) {
+                if (!group[0x08]) continue;
+
+                for (const sub of group[0x08]) {
+                    if (!sub[0x68]) continue;
+
+                    for (const mesh of sub[0x68]) {
+                        const flag = mesh[0x00]?.readUInt32LE?.() ?? 0;
+                        const faceCount = mesh[0x0c]?.readUInt32LE?.() ?? 0;
+                        const vertexCount = mesh[0x10]?.readUInt32LE?.() ?? 0;
+
+                        /* -------- INDICES -------- */
+                        if (mesh[0x18]) {
+                            const ib = mesh[0x18];
+                            for (let i = 0; i < faceCount; i++) {
+                                const a = ib.readUInt16LE(i * 6 + 0) + baseVertex;
+                                const b = ib.readUInt16LE(i * 6 + 2) + baseVertex;
+                                const c = ib.readUInt16LE(i * 6 + 4) + baseVertex;
+                                indices.push(a, b, c);
+                            }
                         }
-                    }
 
-                    /* -------- VERTICES + NORMALES -------- */
-                    if (mesh[0x1c]) {
-                        const vb = mesh[0x1c];
-                        const stride = (flag === 0) ? 0x20 : 0x28;
+                        /* -------- VERTICES + NORMALES -------- */
+                        if (mesh[0x1c]) {
+                            const vb = mesh[0x1c];
+                            const stride = (flag === 0) ? 0x20 : 0x28;
 
-                        for (let i = 0; i < vertexCount; i++) {
-                            const o = i * stride;
+                            for (let i = 0; i < vertexCount; i++) {
+                                const o = i * stride;
 
-                            const x  = vb.readFloatLE(o + 0);
-                            const y  = vb.readFloatLE(o + 4);
-                            const z  = vb.readFloatLE(o + 8);
+                                let x = vb.readFloatLE(o + 0);
+                                let y = vb.readFloatLE(o + 4);
+                                let z = vb.readFloatLE(o + 8);
 
-                            const nx = vb.readFloatLE(o + 12);
-                            const ny = vb.readFloatLE(o + 16);
-                            const nz = vb.readFloatLE(o + 20);
+                                let nx = vb.readFloatLE(o + 12);
+                                let ny = vb.readFloatLE(o + 16);
+                                let nz = vb.readFloatLE(o + 20);
 
-                            vertices.push(x, y, z);
-                            normals.push(nx, ny, nz);
+                                // Aplicar transformaciones si existen
+                                if (transformations.length > 0 && transformIndex < transformations.length) {
+                                    const transform = transformations[transformIndex];
+                                    
+                                    if (transform.matrix) {
+                                        // Aplicar transformación matricial (simplificada - solo posición)
+                                        // En una implementación completa, multiplicaríamos la matriz 4x4
+                                        if (transform.position) {
+                                            x += transform.position[0];
+                                            y += transform.position[1];
+                                            z += transform.position[2];
+                                        }
+                                    }
+                                }
+
+                                // Añadir posiciones adicionales si corresponden
+                                if (additionalPositions.length > 0 && i < additionalPositions.length) {
+                                    const addPos = additionalPositions[i];
+                                    x += addPos[0];
+                                    y += addPos[1];
+                                    z += addPos[2];
+                                }
+
+                                vertices.push(x, y, z);
+                                normals.push(nx, ny, nz);
+                            }
+
+                            baseVertex += vertexCount;
+                            transformIndex++; // Mover a la siguiente transformación para el próximo mesh
                         }
-
-                        baseVertex += vertexCount;
                     }
                 }
             }
         }
     }
 
-    return { vertices, normals, indices };
+    // Procesar ambas fuentes de datos
+    let transformOffset = 0;
+    transformOffset = processModelArray(pvVar6, transformOffset) || 0;
+    processModelArray(pvVar6_b, transformOffset);
+
+    return { vertices, normals, indices, transformations, additionalPositions };
 }
+
 function geometryToOBJ({ vertices, normals, indices }) {
     let obj = '';
-    
+
     /* -------- VERTICES -------- */
     for (let i = 0; i < vertices.length; i += 3) {
-        obj += `v ${vertices[i]} ${vertices[i+1]} ${-vertices[i+2]}\n`;
+        obj += `v ${vertices[i].toFixed(6)} ${vertices[i + 1].toFixed(6)} ${vertices[i + 2].toFixed(6)}\n`;
     }
 
     /* -------- NORMALES -------- */
     for (let i = 0; i < normals.length; i += 3) {
-        obj += `vn ${normals[i]} ${normals[i+1]} ${-normals[i+2]}\n`;
+        obj += `vn ${normals[i].toFixed(6)} ${normals[i + 1].toFixed(6)} ${normals[i + 2].toFixed(6)}\n`;
     }
 
     /* -------- CARAS -------- */
     for (let i = 0; i < indices.length; i += 3) {
-        const a = indices[i]     + 1;
-        const b = indices[i + 2] + 1;
-        const c = indices[i + 1] + 1;
+        const a = indices[i] + 1;
+        const b = indices[i + 1] + 1;
+        const c = indices[i + 2] + 1;
 
         // v//vn (sin UVs)
         obj += `f ${a}//${a} ${b}//${b} ${c}//${c}\n`;
@@ -310,9 +465,9 @@ function geometryToOBJ({ vertices, normals, indices }) {
     return obj;
 }
 
-const geometry = extractGeometry(pvVar6);
-
-const objText  = geometryToOBJ(geometry);
+// Llamar a la función con todas las variables
+const geometry = extractGeometry(pvVar6, pvVar6_b, pvVar6_d, pvVar6_f);
+const objText = geometryToOBJ(geometry);
 
 // Node.js
 require('fs').writeFileSync(output_file_name, objText);
@@ -320,15 +475,11 @@ require('fs').writeFileSync(output_file_name, objText);
 // Browser
 // console.log(objText);
 
-console.log(geometry.vertices.length / 3, "vertices");
-console.log(geometry.normals.length  / 3, "normals");
-console.log(geometry.indices.length  / 3, "triangles");
-/*const vertices = pvVar6_f.map(i=>i.avStack_928)
-let objContent = ''
-for (const v of vertices) {
-    objContent += `v ${v.readFloatLE(0)} ${v.readFloatLE(4)} ${v.readFloatLE(8)}\n`;
-}
-
-objContent += '\n';
-
-fs.writeFileSync(output_file_name, objContent);*/
+/*console.log("Resumen de extracción:");
+console.log("-" .repeat(40));
+console.log(`${geometry.vertices.length / 3} vértices extraídos`);
+console.log(`${geometry.normals.length / 3} normales extraídas`);
+console.log(`${geometry.indices.length / 3} triángulos extraídos`);
+console.log(`${geometry.transformations.length} transformaciones aplicadas`);
+console.log(`${geometry.additionalPositions.length} posiciones adicionales incluidas`);
+console.log("-" .repeat(40));*/
