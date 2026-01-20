@@ -1,4 +1,5 @@
 const fs = require('fs')
+const path = require('path')
 const input_file_name = 'mp_dm_vertigo.opt'
 const output_file_name = 'mp_dm_vertigo.obj'
 
@@ -307,7 +308,7 @@ function get_texture(buf_name_texture){
         0x24: texture_reader.get_chunk(4),
     }
     unaff_EBP['pvVar4'] = texture_reader.get_chunk(unaff_EBP[0x24].readUInt32LE())
-    exportTextureRaw(unaff_EBP);
+    
     if(name_texture === 'burbuja.tex'){
         console.log('dds flag 0x30: ', unaff_EBP[0x30].toString('hex'))
         console.log('dds flag 0x11: ', unaff_EBP[0x11].toString('hex'))
@@ -316,51 +317,113 @@ function get_texture(buf_name_texture){
         console.log('dds flag 0x28: ', unaff_EBP[0x28].toString('hex'))
         console.log('dds flag 0x24: ', unaff_EBP[0x24].toString('hex'))
     }
-
+    unaff_EBP['dds'] = getBufferDds(unaff_EBP);
     return unaff_EBP
 }
-const path = require('path');
 
 
-function exportTextureRaw(unaff_EBP, outDir = './export/textures') {
+
+function getBufferDds(unaff_EBP, outDir = './export') {
     if (!fs.existsSync(outDir)) {
         fs.mkdirSync(outDir, { recursive: true });
     }
 
     const name = unaff_EBP.name_texture.replace(/\0/g, '');
 
-    // 1. Decodificar Base64 → binario real
-    const base64String = unaff_EBP.pvVar4;
-    const payload = unaff_EBP.pvVar4
+    // 1. Obtener los datos binarios directamente (no Base64)
+    const payload = unaff_EBP.pvVar4; // Esto ya es Buffer/binario
 
-    // 2. Parámetros (ajustables si hiciera falta)
-    const width  = unaff_EBP[0x28].readUInt32LE();
+    // 2. Leer parámetros exactamente como en el código desensamblado
+    const width = unaff_EBP[0x28].readUInt32LE();
     const height = unaff_EBP[0x2c].readUInt32LE();
-    const mipmaps = Math.max(1, unaff_EBP[0x11].readUInt8());
+    const formatFlag = unaff_EBP[0x11].readUInt8(); // 0x00 o 0x01
+    const dataSize = unaff_EBP[0x24].readUInt32LE(); // Tamaño de datos
+    
+    // 3. Determinar formato basado en flag
+    let format;
+    let formatFourCC;
+    
+    if (formatFlag === 0x00) {
+        format = 'DXT1';
+        formatFourCC = 0x31545844; // 'DXT1'
+    } else if (formatFlag === 0x01) {
+        format = 'DXT5';
+        formatFourCC = 0x35545844; // 'DXT5'
+    } else {
+        console.warn(`Formato desconocido: 0x${formatFlag.toString(16)}, usando DXT5 por defecto`);
+        format = 'DXT5';
+        formatFourCC = 0x35545844;
+    }
 
-    // 3. Cabecera DDS (DXT5 por defecto)
+    // 4. Verificar si los datos necesitan procesamiento
+    // Según el código, podría haber ajuste de dimensiones
+    let actualWidth = width;
+    let actualHeight = height;
+    
+    // 5. Crear cabecera DDS con información correcta
     const header = createDDSHeader({
-        width: width,
-        height: height,
-        format: 'DXT5'
+        width: actualWidth,
+        height: actualHeight,
+        format: format,
+        mipmaps: 1,
+        dataSize: dataSize
     });
 
-    // 4. Escribir archivo
-    const outPath = `./export/${name + '.dds'}`
-    fs.writeFileSync(outPath, Buffer.concat([header, payload]));
+    // 6. Escribir archivo
+    const outPath = path.join(outDir, name + '.dds');
+    
+    // Si payload es un string, convertirlo a Buffer
+    let textureData;
+    if (typeof payload === 'string') {
+        // Si es Base64, decodificarlo
+        textureData = Buffer.from(payload, 'base64');
+    } else if (Buffer.isBuffer(payload)) {
+        textureData = payload;
+    } else {
+        console.error(`Tipo de datos no soportado: ${typeof payload}`);
+        return null;
+    }
+    
+    // Verificar tamaño de datos
+    const expectedSize = calculateDXTDataSize(actualWidth, actualHeight, format);
+    console.log(`Tamaño esperado: ${expectedSize}, Tamaño real: ${textureData.length}`);
+    
+    // Ajustar datos si es necesario
+    let finalData = textureData;
+    if (textureData.length < expectedSize) {
+        console.warn(`Datos insuficientes, rellenando con ceros...`);
+        const paddedData = Buffer.alloc(expectedSize);
+        textureData.copy(paddedData);
+        finalData = paddedData;
+    } else if (textureData.length > expectedSize) {
+        console.warn(`Datos excesivos, truncando...`);
+        finalData = textureData.slice(0, expectedSize);
+    }
+    
+    fs.writeFileSync(outPath, Buffer.concat([header, finalData]));
 
-    console.log(`✓ Textura exportada: ${outPath}`);
-    return outPath;
+    console.log(`✓ Textura exportada: ${outPath} (${actualWidth}x${actualHeight}, ${format})`);
+    return Buffer.concat([header, finalData]);
 }
+
+function calculateDXTDataSize(width, height, format) {
+    // Calcular tamaño para formatos DXT
+    const blockSize = (format === 'DXT1') ? 8 : 16;
+    const blocksWide = Math.max(1, Math.floor((width + 3) / 4));
+    const blocksHigh = Math.max(1, Math.floor((height + 3) / 4));
+    return blocksWide * blocksHigh * blockSize;
+}
+
 function createDDSHeader(options = {}) {
     const {
         width = 16,
         height = 16,
-        format = 'DXT5', // DXT1, DXT3, DXT5, etc.
-        mipmaps = 1
+        format = 'DXT5',
+        mipmaps = 1,
+        dataSize = 0
     } = options;
 
-    const header = Buffer.alloc(128); // Cabecera DDS siempre 128 bytes
+    const header = Buffer.alloc(128);
     header.fill(0);
 
     // Magic number "DDS "
@@ -376,9 +439,8 @@ function createDDSHeader(options = {}) {
     header.writeUInt32LE(height, 12);
     header.writeUInt32LE(width, 16);
 
-    // dwPitchOrLinearSize (para DXT: max(1, (width+3)/4) * blocksize)
-    let blockSize = 16;
-    if (format === 'DXT1') blockSize = 8;
+    // dwPitchOrLinearSize
+    const blockSize = (format === 'DXT1') ? 8 : 16;
     const linearSize = Math.max(1, Math.floor((width + 3) / 4)) * blockSize;
     header.writeUInt32LE(linearSize, 20);
 
@@ -388,24 +450,33 @@ function createDDSHeader(options = {}) {
     // dwMipMapCount
     header.writeUInt32LE(mipmaps, 28);
 
-    // dwReserved1[11] (reservado, ya en cero)
-
     // --- DDS_PIXELFORMAT (offset 76) ---
-    // dwSize = 32
-    header.writeUInt32LE(32, 76);
-
-    // dwFlags = DDPF_FOURCC
-    header.writeUInt32LE(0x4, 80);
+    header.writeUInt32LE(32, 76); // dwSize = 32
+    header.writeUInt32LE(0x4, 80); // dwFlags = DDPF_FOURCC
 
     // dwFourCC
-    const fourCC = format === 'DXT1' ? 0x31545844 :
-                   format === 'DXT3' ? 0x33545844 :
-                   format === 'DXT5' ? 0x35545844 : 0x20585858;
+    const fourCC = (format === 'DXT1') ? 0x31545844 :
+                   (format === 'DXT3') ? 0x33545844 :
+                   (format === 'DXT5') ? 0x35545844 : 0x20585858;
     header.writeUInt32LE(fourCC, 84);
 
-    // --- DDS_HEADER continuado ---
-    // dwCaps = DDSCAPS_TEXTURE
-    header.writeUInt32LE(0x1000, 108);
+    // dwRGBBitCount, dwRBitMask, dwGBitMask, dwBBitMask, dwABitMask (todo 0 para FOURCC)
+    header.writeUInt32LE(0, 88);
+    header.writeUInt32LE(0, 92);
+    header.writeUInt32LE(0, 96);
+    header.writeUInt32LE(0, 100);
+    header.writeUInt32LE(0, 104);
+
+    // dwCaps
+    header.writeUInt32LE(0x1000, 108); // DDSCAPS_TEXTURE
+    
+    // dwCaps2, dwCaps3, dwCaps4 (0 para texturas 2D)
+    header.writeUInt32LE(0, 112);
+    header.writeUInt32LE(0, 116);
+    header.writeUInt32LE(0, 120);
+
+    // dwReserved2
+    header.writeUInt32LE(0, 124);
 
     return header;
 }
