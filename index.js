@@ -49,6 +49,11 @@ const local_92c = reader.get_chunk(4);
 const pvVar6 = []
 for(let i = 0; i < local_978.readUInt32LE(); i++){
     pvVar6.push(FUN_FIRSTCALL_10055c00())
+    
+    const { obj, mtl } = exportOBJ_MTL(pvVar6[pvVar6.length-1], 'modelo');
+
+    fs.writeFileSync('./map/modelo'+i+'.obj', obj);
+    fs.writeFileSync('./map/modelo'+i+'.mtl', mtl);
 }
 
 
@@ -184,12 +189,10 @@ function FUN_FIRSTCALL_10055c00(){
             0x04: reader.get_chunk(),
             texture: []
         }
-        console.log("padre: ",this0x84[0x00].toString('ascii'))
         for(let x = 0; x < this0x84[0x04].readUInt32LE(); x++){
             const sStack_34_b = reader.get_chunk(4);
             const _Memory = reader.get_chunk(sStack_34_b.readUInt32LE()); //texture
             // _Memory contiene nombre de las texturas 
-            console.log("hijo: ", _Memory.toString('ascii'))
             const texture = get_texture(_Memory)
             this0x84.texture.push(texture);
         }
@@ -285,6 +288,103 @@ function FUN_FIRSTCALL_10055c00(){
     }
     
 }
+function exportOBJ_MTL(parsed, name = 'model') {
+    let obj = `mtllib ${name}.mtl\n`;
+    let mtl = '';
+
+    let vOffset = 1;
+    let materialIndex = 0;
+
+    // ==========================
+    // MATERIALES → MTL
+    // ==========================
+    parsed.iVar9.forEach((mat, i) => {
+        const tex = mat.texture?.[0];
+        const texName = tex?.name_texture
+            ? tex.name_texture.replace('.tex', '.dds')
+            : null;
+
+        mtl += `newmtl mat_${i}\n`;
+        mtl += `Ka 1 1 1\nKd 1 1 1\nKs 0 0 0\nillum 2\n`;
+        if (texName) mtl += `map_Kd export/${texName}\n`;
+        mtl += `\n`;
+    });
+
+    // ==========================
+    // GEOMETRÍA → OBJ
+    // ==========================
+    for (const block of parsed.iVar9_b) {
+        for (const group of block[0x08]) {
+            for (const mesh of group[0x68]) {
+
+                const vb = mesh[0x1c];
+                const ib = mesh[0x18];
+
+                if (!vb || !ib) continue;
+
+                const vCount = mesh[0x10].readUInt32LE();
+                const fCount = mesh[0x0c].readUInt32LE();
+                const stride = vb.length / vCount;
+
+                // ---- MATERIAL ----
+                obj += `usemtl mat_${materialIndex}\n`;
+                materialIndex = (materialIndex + 1) % parsed.iVar9.length;
+
+                // ---- VERTICES / NORMALS / UV ----
+                for (let i = 0; i < vCount; i++) {
+                    const o = i * stride;
+
+                    const x = vb.readFloatLE(o);
+                    const y = vb.readFloatLE(o + 4);
+                    const z = vb.readFloatLE(o + 8);
+
+                    const nx = vb.readFloatLE(o + 12);
+                    const ny = vb.readFloatLE(o + 16);
+                    const nz = vb.readFloatLE(o + 20);
+
+                    let u = 0, v = 0;
+                    if (stride >= 32) {
+                        u = vb.readFloatLE(o + 24);
+                        v = vb.readFloatLE(o + 28);
+                    }
+
+                    obj += `v ${x} ${y} ${-z}\n`;
+                    obj += `vt ${u} ${1 - v}\n`;
+                    obj += `vn ${nx} ${ny} ${-nz}\n`;
+                }
+
+                // ---- FACES ----
+                const is16 = (ib.length / fCount) <= 6;
+
+                for (let i = 0; i < fCount; i++) {
+                    let a, b, c;
+
+                    if (is16) {
+                        a = ib.readUInt16LE(i * 6);
+                        b = ib.readUInt16LE(i * 6 + 2);
+                        c = ib.readUInt16LE(i * 6 + 4);
+                    } else {
+                        a = ib.readUInt32LE(i * 12);
+                        b = ib.readUInt32LE(i * 12 + 4);
+                        c = ib.readUInt32LE(i * 12 + 8);
+                    }
+
+                    obj += `f ${a+vOffset}/${a+vOffset}/${a+vOffset} `
+                        + `${b+vOffset}/${b+vOffset}/${b+vOffset} `
+                        + `${c+vOffset}/${c+vOffset}/${c+vOffset}\n`;
+                }
+
+                vOffset += vCount;
+            }
+        }
+    }
+
+    return {
+        obj,
+        mtl
+    };
+}
+
 function get_texture(buf_name_texture){
     buf_name_texture = buf_name_texture.slice(0, buf_name_texture.length -1)
     const name_texture = buf_name_texture.toString('ascii')
@@ -309,21 +409,13 @@ function get_texture(buf_name_texture){
     }
     unaff_EBP['pvVar4'] = texture_reader.get_chunk(unaff_EBP[0x24].readUInt32LE())
     
-    if(name_texture === 'burbuja.tex'){
-        console.log('dds flag 0x30: ', unaff_EBP[0x30].toString('hex'))
-        console.log('dds flag 0x11: ', unaff_EBP[0x11].toString('hex'))
-        console.log('dds flag 0x34: ', unaff_EBP[0x34].toString('hex'))
-        console.log('dds flag 0x2c: ', unaff_EBP[0x2c].toString('hex'))
-        console.log('dds flag 0x28: ', unaff_EBP[0x28].toString('hex'))
-        console.log('dds flag 0x24: ', unaff_EBP[0x24].toString('hex'))
-    }
     unaff_EBP['dds'] = getBufferDds(unaff_EBP);
     return unaff_EBP
 }
 
 
 
-function getBufferDds(unaff_EBP, outDir = './export') {
+function getBufferDds(unaff_EBP, outDir = './map/export') {
     if (!fs.existsSync(outDir)) {
         fs.mkdirSync(outDir, { recursive: true });
     }
@@ -370,7 +462,7 @@ function getBufferDds(unaff_EBP, outDir = './export') {
     });
 
     // 6. Escribir archivo
-    const outPath = path.join(outDir, name + '.dds');
+    const outPath = path.join(outDir, name.replace('.tex','') + '.dds');
     
     // Si payload es un string, convertirlo a Buffer
     let textureData;
@@ -493,48 +585,38 @@ const exported = {
 }
 function extractGeometry(pvVar6, pvVar6_b, pvVar6_d = [], pvVar6_f = [], pvVar6_g = null) {
     const vertices = [];
-    const normals = [];
-    const indices = [];
-    const uv = [];
+    const normals  = [];
+    const indices  = [];
+    const uv       = [];
 
-    console.log("=== EXTRACCIÓN DE GEOMETRÍA (ENGINE-CORRECTA) ===");
+    const materials = [];
+    const materialMap = new Map(); // materialIndex -> materialId usado en OBJ
 
     // =========================================================
-    // 1. GEOMETRÍA BASE (SIN TRANSFORMS)
+    // 1. EXTRAER GEOMETRÍA BASE + MATERIAL INDEX
     // =========================================================
     const baseGeometries = extractBaseGeometry(pvVar6);
-    console.log(`✓ Geometrías base: ${baseGeometries.length}`);
 
     // =========================================================
-    // 2. INSTANCIAS DESDE JERARQUÍA
+    // 2. INSTANCIAS
     // =========================================================
-    let instances = [];
+    const instances = [];
 
     if (pvVar6_g) {
-        console.log("✓ Procesando jerarquía pvVar6_g...");
-        processHierarchyNode(pvVar6_g, identityMatrix(), []);
-        console.log(`✓ Instancias desde jerarquía: ${instances.length}`);
+        processHierarchyNode(pvVar6_g, identityMatrix());
     }
 
-    // =========================================================
-    // 3. FALLBACK: TRANSFORMS GLOBALES
-    // =========================================================
     if (instances.length === 0 && Array.isArray(pvVar6_d)) {
-        console.log("⚠️ No hay jerarquía, usando pvVar6_d como fallback");
-
         for (let i = 0; i < Math.min(baseGeometries.length, pvVar6_d.length); i++) {
-            const m = extractMatrixFromBuffer(pvVar6_d[i]);
             instances.push({
                 geometryIndex: i,
-                transform: m
+                transform: extractMatrixFromBuffer(pvVar6_d[i])
             });
         }
     }
 
-    console.log(`✓ Total instancias finales: ${instances.length}`);
-
     // =========================================================
-    // 4. APLICAR TRANSFORMS Y CONSTRUIR MESH
+    // 3. CONSTRUIR MESH + MATERIALES
     // =========================================================
     let vertexOffset = 0;
 
@@ -542,6 +624,28 @@ function extractGeometry(pvVar6, pvVar6_b, pvVar6_d = [], pvVar6_f = [], pvVar6_
         const geo = baseGeometries[inst.geometryIndex];
         if (!geo) continue;
 
+        // ----- MATERIAL -----
+        let matId = 0;
+        if (!materialMap.has(geo.materialIndex)) {
+            matId = materials.length;
+            materialMap.set(geo.materialIndex, matId);
+
+            const matSrc = pvVar6[0]?.iVar9?.[geo.materialIndex];
+            const texObj = matSrc?.texture?.[0];
+
+            materials.push({
+                name: `mat_${matId}`,
+                texture: texObj?.name_texture
+                    ? `export/${texObj.name_texture.replace('.tex', '.dds')}`
+                    : null
+            });
+        } else {
+            matId = materialMap.get(geo.materialIndex);
+        }
+
+        geo._materialId = matId;
+
+        // ----- VERTICES -----
         for (let i = 0; i < geo.vertices.length; i += 3) {
             const p = transformPoint(
                 inst.transform,
@@ -552,6 +656,7 @@ function extractGeometry(pvVar6, pvVar6_b, pvVar6_d = [], pvVar6_f = [], pvVar6_
             vertices.push(p.x, p.y, p.z);
         }
 
+        // ----- NORMALS -----
         for (let i = 0; i < geo.normals.length; i += 3) {
             const n = transformNormal(
                 inst.transform,
@@ -562,32 +667,34 @@ function extractGeometry(pvVar6, pvVar6_b, pvVar6_d = [], pvVar6_f = [], pvVar6_
             normals.push(n.x, n.y, n.z);
         }
 
-        if (geo.uv.length) {
-            uv.push(...geo.uv);
-        } else {
-            for (let i = 0; i < geo.vertices.length / 3; i++) uv.push(0, 0);
-        }
+        // ----- UV -----
+        if (geo.uv.length) uv.push(...geo.uv);
+        else for (let i = 0; i < geo.vertices.length / 3; i++) uv.push(0, 0);
 
+        // ----- INDICES -----
         for (const idx of geo.indices) {
             indices.push(idx + vertexOffset);
         }
 
+        geo._indexOffset = vertexOffset;
         vertexOffset += geo.vertices.length / 3;
     }
 
     // =========================================================
-    // 5. EXPORT
+    // 4. EXPORT
     // =========================================================
     return {
         vertices,
         normals,
         indices,
         uv,
-        toOBJ: () => geometryToOBJ(vertices, normals, indices, uv)
+        materials,
+        toOBJ,
+        toMTL
     };
 
     // =========================================================
-    // =============== FUNCIONES INTERNAS ======================
+    // ================= FUNCIONES INTERNAS ====================
     // =========================================================
 
     function extractBaseGeometry(pvVar6) {
@@ -601,9 +708,14 @@ function extractGeometry(pvVar6, pvVar6_b, pvVar6_d = [], pvVar6_f = [], pvVar6_
                         const fCount = mesh[0x0c]?.readUInt32LE?.() ?? 0;
                         if (!vCount || !fCount) continue;
 
-                        const geo = { vertices: [], normals: [], indices: [], uv: [] };
+                        const geo = {
+                            vertices: [],
+                            normals: [],
+                            indices: [],
+                            uv: [],
+                            materialIndex: mesh[0x08]?.readUInt32LE?.() ?? 0
+                        };
 
-                        // Índices
                         const ib = mesh[0x18];
                         const is16 = (ib.length / fCount) <= 6;
                         for (let i = 0; i < fCount; i++) {
@@ -622,7 +734,6 @@ function extractGeometry(pvVar6, pvVar6_b, pvVar6_d = [], pvVar6_f = [], pvVar6_
                             }
                         }
 
-                        // Vértices
                         const vb = mesh[0x1c];
                         const stride = Math.floor(vb.length / vCount);
                         for (let i = 0; i < vCount; i++) {
@@ -653,36 +764,27 @@ function extractGeometry(pvVar6, pvVar6_b, pvVar6_d = [], pvVar6_f = [], pvVar6_
         return out;
     }
 
-    function processHierarchyNode(node, parentMatrix, path) {
+    function processHierarchyNode(node, parentMatrix) {
         let local = identityMatrix();
-
-        if (node.local_120) {
-            local = extractMatrixFromBuffer(node.local_120);
-        }
-
+        if (node.local_120) local = extractMatrixFromBuffer(node.local_120);
         const world = multiplyMatrices(parentMatrix, local);
 
         if (Array.isArray(node.local_13c)) {
             for (const buf of node.local_13c) {
                 const idx = Buffer.from(buf).readUInt32LE(0);
-                if (idx < baseGeometries.length) {
-                    instances.push({
-                        geometryIndex: idx,
-                        transform: world
-                    });
-                }
+                instances.push({ geometryIndex: idx, transform: world });
             }
         }
 
         for (const child of node.pvVar4 ?? []) {
-            processHierarchyNode(child, world, path);
+            processHierarchyNode(child, world);
         }
     }
 
     function extractMatrixFromBuffer(buf) {
         const m = identityMatrix();
         if (!buf?.data) return m;
-        const b = Buffer.from(buf);
+        const b = Buffer.from(buf.data ?? buf);
         for (let i = 0; i < 16; i++) m[i] = b.readFloatLE(i * 4);
         return m;
     }
@@ -718,21 +820,43 @@ function extractGeometry(pvVar6, pvVar6_b, pvVar6_d = [], pvVar6_f = [], pvVar6_
         };
     }
 
-    function geometryToOBJ(v, n, i, uv) {
+    function toOBJ() {
+        let out = 'mtllib model.mtl\n';
+        let faceCursor = 0;
+
+        for (let i = 0; i < vertices.length; i += 3)
+            out += `v ${vertices[i]} ${vertices[i+1]} ${-vertices[i+2]}\n`;
+
+        for (let i = 0; i < uv.length; i += 2)
+            out += `vt ${uv[i]} ${1-uv[i+1]}\n`;
+
+        for (let i = 0; i < normals.length; i += 3)
+            out += `vn ${normals[i]} ${normals[i+1]} ${-normals[i+2]}\n`;
+
+        for (const geo of baseGeometries) {
+            out += `usemtl mat_${geo._materialId}\n`;
+            for (let i = 0; i < geo.indices.length; i += 3) {
+                const a = geo.indices[i]   + geo._indexOffset + 1;
+                const b = geo.indices[i+1] + geo._indexOffset + 1;
+                const c = geo.indices[i+2] + geo._indexOffset + 1;
+                out += `f ${a}/${a}/${a} ${b}/${b}/${b} ${c}/${c}/${c}\n`;
+            }
+        }
+        return out;
+    }
+
+    function toMTL() {
         let out = '';
-        for (let k = 0; k < v.length; k += 3)
-            out += `v ${v[k]} ${v[k+1]} ${-v[k+2]}\n`;
-        for (let k = 0; k < uv.length; k += 2)
-            out += `vt ${uv[k]} ${1-uv[k+1]}\n`;
-        for (let k = 0; k < n.length; k += 3)
-            out += `vn ${n[k]} ${n[k+1]} ${-n[k+2]}\n`;
-        for (let k = 0; k < i.length; k += 3) {
-            const a=i[k]+1,b=i[k+1]+1,c=i[k+2]+1;
-            out += `f ${a}/${a}/${a} ${b}/${b}/${b} ${c}/${c}/${c}\n`;
+        for (const m of materials) {
+            out += `newmtl ${m.name}\n`;
+            out += `Kd 1 1 1\nKa 1 1 1\nKs 0 0 0\nillum 2\n`;
+            if (m.texture) out += `map_Kd ${m.texture}\n`;
+            out += '\n';
         }
         return out;
     }
 }
+
 
 
 // Función para exportar a OBJ (maneja instancias)
@@ -795,7 +919,8 @@ function processAndExport() {
     // Mostrar modelos con múltiples instancias
     
     const objText = geometryToOBJ(geometry);
-    require('fs').writeFileSync(output_file_name, objText);
+    require('fs').writeFileSync(output_file_name, geometry.toOBJ());
+    require('fs').writeFileSync(output_file_name+'.MTL', geometry.toMTL());
     console.log('Archivo OBJ guardado como output_with_instances.obj');
 }
 processAndExport()
