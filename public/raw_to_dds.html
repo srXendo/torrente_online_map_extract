@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Hex a Imagen</title>
+<style>
+  body { font-family: sans-serif; text-align: center; margin-top: 50px; }
+  canvas { border: 1px solid #333; }
+  textarea { width: 80%; height: 100px; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+
+<h1>Convertir Hex a Imagen</h1>
+<textarea id="hexInput" placeholder="Pega aquí tu hex..."></textarea><br>
+<label>Ancho de la imagen: <input type="number" id="widthInput" value="64"></label><br><br>
+<button onclick="loadTexture()">Generar Imagen</button><br><br>
+<canvas id="canvas"></canvas>
+
+<script>
+function drawImage() {
+  const hexString = document.getElementById('hexInput').value.replace(/\s+/g, '').replaceAll(' ','');
+  const width = parseInt(document.getElementById('widthInput').value) || 64;
+
+  if (!hexString) {
+    alert('Ingresa tu hex primero');
+    return;
+  }
+
+  // Convertir hex a array de bytes
+  const bytes = [];
+  for (let i = 0; i < hexString.length; i += 2) {
+    bytes.push(parseInt(hexString.substr(i, 2), 16));
+  }
+
+  const height = Math.ceil(bytes.length / width);
+  const canvas = document.getElementById('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  const imageData = ctx.createImageData(width, height);
+
+  // Llenar pixels como grayscale
+  for (let i = 0; i < bytes.length; i++) {
+    const value = bytes[i];
+    imageData.data[i * 4 + 0] = value; // R
+    imageData.data[i * 4 + 1] = value; // G
+    imageData.data[i * 4 + 2] = value; // B
+    imageData.data[i * 4 + 3] = 255;   // A
+  }
+
+  ctx.putImageData(imageData, 0, 0);
+}
+async function loadTexture() {
+  // Suponiendo que ya tienes tu array de bytes en base64 o hex (pvVar4)
+  const hex = document.getElementById('hexInput').value.replace(/\s+/g, '').replaceAll(' ',''); // tu hex completo
+  const width = parseInt(document.getElementById('widthInput').value) || 64;;  // pon aquí tu ancho de textura (0x2c)
+  const height = parseInt(document.getElementById('widthInput').value) || 64;; // pon aquí tu alto de textura (0x28)
+
+  // Convertir hex a Uint8Array
+  const bytes = new Uint8Array(hex.match(/.{1,2}/g).map(b => parseInt(b,16)));
+
+  const canvas = document.getElementById('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  const imageData = ctx.createImageData(width, height);
+
+  // Rellenar ImageData con RGBA
+  for (let i = 0; i < width*height; i++) {
+    imageData.data[i*4 + 0] = bytes[i*4 + 0]; // R
+    imageData.data[i*4 + 1] = bytes[i*4 + 1]; // G
+    imageData.data[i*4 + 2] = bytes[i*4 + 2]; // B
+    imageData.data[i*4 + 3] = bytes[i*4 + 3]; // A
+  }
+
+  ctx.putImageData(imageData, 0, 0);
+}
+
+
+</script>
+
+</body>
+</html>
