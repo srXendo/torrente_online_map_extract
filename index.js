@@ -2,7 +2,7 @@ const fs = require('fs')
 const path = require('path')
 const input_file_name = 'mp_dm_vertigo.opt'
 const output_file_name = 'mp_dm_vertigo.obj'
-
+let profundity_level = 0
 if (!fs.existsSync(input_file_name)) {
     throw new Error(`Err: file input not exist: ${input_file_name}`)
 }
@@ -47,11 +47,28 @@ const this0x88 = reader.get_chunk(4);
 const local_92c = reader.get_chunk(4);
 
 const pvVar6 = []
+let last_healty = 0
 for(let i = 0; i < local_978.readUInt32LE(); i++){
-    pvVar6.push(FUN_FIRSTCALL_10055c00())
+    const row = FUN_FIRSTCALL_10055c00()
+    pvVar6.push(row)
     
-    const { obj, mtl } = exportOBJ_MTL(pvVar6[pvVar6.length-1], 'modelo');
 
+    const arr = [0,1,10,11,12,13,14,148,149,15,150,151,152,153,154,155,156,157,16,2,3,4,41,486,487,488,489,490,491,492,493,494,495,496,5,544,545,546,547,6,614,615,616,617,618,619,620,621,622,623,624,625,651,652,653,654,655,656,657,658,659,660,661,662,663,664,665,666,667,668,669,670,671,672,673,674,675,676,677,678,679,680,681,682,683,684,685,686,687,688,689,690,691,692,693,694,695,696,697,698,699,7,700,701,702,703,704,705,707,8,9]
+    const { obj, mtl } = exportOBJ_MTL(pvVar6[pvVar6.length-1], 'modelo'+i);
+
+    if(arr.indexOf(i) > -1){
+        console.log('objeto desalineado: ', JSON.stringify(row))
+        console.log('objeto alineado: ', JSON.stringify(last_healty))
+
+    }else{
+        last_healty = row
+    }
+    if(i === 635){
+        console.log('suelo con 4 farolas, 2 palmeras 2 bancos y una papelera', JSON.stringify(row) )
+    }
+    if(i === 15){
+        console.log('farola unica: ', JSON.stringify(row))
+    }
     fs.writeFileSync('./map/modelo'+i+'.obj', obj);
     fs.writeFileSync('./map/modelo'+i+'.mtl', mtl);
 }
@@ -111,6 +128,7 @@ for(let i = 0; i < this0x7c.readUInt32LE(); i++){
         default:
         break;
     }
+    
     pvVar6_d.push(obj)
 }
 
@@ -124,18 +142,49 @@ for(let i = 0; i < local_988.readUInt32LE(); i++){
     for(let x = 0; x < iStack_990.readUInt32LE(); x++){
     }
     pvVar6_e.push(obj)
+    
 }
 
 const pvVar6_f = []
-for(let i = 0; i < this0x88.readUInt32LE(); i++){
-    const avStack_910 = reader.get_chunk(0x40);
-    const avStack_928 = reader.get_chunk(0xc);
-    pvVar6_f.push({
-        avStack_910,
-        avStack_928
-    })
+function applyMatrix4(vec, mat) {
+    // vec = Float32Array[3], mat = Float32Array[16] (column-major o row-major según motor)
+    const x = vec[0], y = vec[1], z = vec[2];
+    return [
+        mat[0]*x + mat[4]*y + mat[8]*z + mat[12],
+        mat[1]*x + mat[5]*y + mat[9]*z + mat[13],
+        mat[2]*x + mat[6]*y + mat[10]*z + mat[14]
+    ];
 }
+
+let references_text = '';
+
+for(let i = 0; i < this0x88.readUInt32LE(); i++){
+    const avStack_910 = reader.get_chunk(0x40); // 16 floats
+    const avStack_928 = reader.get_chunk(0xc);  // 3 floats
+
+    // Convertir a Float32Array
+    const mat = new Float32Array(16);
+    for(let j = 0; j < 16; j++){
+        mat[j] = avStack_910.readFloatLE(j*4);
+    }
+    const vec = [
+        avStack_928.readFloatLE(0),
+        avStack_928.readFloatLE(4),
+        avStack_928.readFloatLE(8)
+    ];
+
+    // Aplicar la transformación
+    const worldPos = applyMatrix4(vec, mat);
+
+    // Escribir al .obj
+    references_text += `v ${worldPos[0]} ${worldPos[1]} ${-worldPos[2]}\n`;
+}
+
+fs.writeFileSync('./map/Areferences.obj', references_text);
+
 const pvVar6_g = FUN_LASTCALL_10058b40()
+
+
 function FUN_LASTCALL_10058b40(){
     let local_120 = reader.get_chunk(0x40);
     let local_12c = reader.get_chunk(0xc);
@@ -145,12 +194,14 @@ function FUN_LASTCALL_10058b40(){
     for(let i = 0; i < piVar1.readUInt32LE(); i++){
         local_13c.push(reader.get_chunk(0x4));
     }
+    //console.log('reference id: ', local_13c)
     let local_138 = reader.get_chunk(4);
     let second_for = []
     for(let i = 0; i < local_138.readUInt32LE(); i++){
         let local_13c_2 = reader.get_chunk(4)
         second_for.push(local_13c_2)
     }
+    
     let pvVar2_0xf0 = reader.get_chunk(4);
     let pvVar2_0xf4 = 0
     if(pvVar2_0xf0.readUInt32LE() > 0){
@@ -159,11 +210,14 @@ function FUN_LASTCALL_10058b40(){
         pvVar2_0xf4 = reader.get_chunk(pvVar2_0xf0.readUInt32LE() * 4);
 
     }
+    
     let pvVar2_0xd0 = reader.get_chunk(4);
     let pvVar4 = []
     for(let i = 0; i < pvVar2_0xd0.readUInt32LE(); i++){
         pvVar4.push(FUN_LASTCALL_10058b40())
     }
+    profundity_level = 1+ profundity_level
+    console.log('new profunidty: ', profundity_level)
     return {
         local_120,
         local_12c,
@@ -184,17 +238,19 @@ function FUN_FIRSTCALL_10055c00(){
     for(let i = 0; i < piVar1.readUInt32LE(); i++){
        
         const sStack_34 = reader.get_chunk(4);
+        
         const this0x84 = {
             0x00: reader.get_chunk(sStack_34.readUInt32LE()),
             0x04: reader.get_chunk(),
             texture: []
         }
+        
         for(let x = 0; x < this0x84[0x04].readUInt32LE(); x++){
             const sStack_34_b = reader.get_chunk(4);
             const _Memory = reader.get_chunk(sStack_34_b.readUInt32LE()); //texture
             // _Memory contiene nombre de las texturas 
             const texture = get_texture(_Memory)
-            this0x84.texture.push(texture);
+            //this0x84.texture.push(texture);
         }
         this0x84[0xc] = reader.get_chunk(1)
         this0x84[0x10] = reader.get_chunk(0x10)
@@ -202,7 +258,9 @@ function FUN_FIRSTCALL_10055c00(){
         this0x84[0x30] = reader.get_chunk(0x10)
         this0x84[0x40] = reader.get_chunk(0x10)
         this0x84[0x50] = reader.get_chunk(4);
+
         iVar9.push(this0x84)
+
     }
     const piVar1_b = reader.get_chunk(4);
     const iVar9_b = []
@@ -257,7 +315,7 @@ function FUN_FIRSTCALL_10055c00(){
                 if (countA > 0) {
                     row_0x68[0x18] = reader.get_chunk(countA * 6);
                 }
-
+                
                 // ---- buffer B (conditional size) ----
                 const flag   = row_0x68[0x00].readUInt32LE();
                 const countB = row_0x68[0x10].readUInt32LE();
@@ -271,9 +329,17 @@ function FUN_FIRSTCALL_10055c00(){
                     }
 
                     row_0x68[0x1c] = reader.get_chunk(sizeB);
+
                 }
+
+
                 row_this0x8c[0x68].push(row_0x68)
+
+                
+                
+                
             }
+
             this0x8c[0x08].push(row_this0x8c)
         }
         iVar9_b.push(this0x8c)
@@ -319,8 +385,17 @@ function exportOBJ_MTL(parsed, name = 'model') {
 
                 const vb = mesh[0x1c];
                 const ib = mesh[0x18];
+                const require_slave = mesh[0x04].readUInt32LE()
+                if(require_slave === 0){
+                    
+                }else{
+                   
+                }
 
-                if (!vb || !ib) continue;
+                if (!vb) {
+                    console.log('referencia a material?')
+                    continue;
+                };
 
                 const vCount = mesh[0x10].readUInt32LE();
                 const fCount = mesh[0x0c].readUInt32LE();
@@ -478,7 +553,7 @@ function getBufferDds(unaff_EBP, outDir = './map/export') {
     
     // Verificar tamaño de datos
     const expectedSize = calculateDXTDataSize(actualWidth, actualHeight, format);
-    console.log(`Tamaño esperado: ${expectedSize}, Tamaño real: ${textureData.length}`);
+
     
     // Ajustar datos si es necesario
     let finalData = textureData;
@@ -494,7 +569,6 @@ function getBufferDds(unaff_EBP, outDir = './map/export') {
     
     fs.writeFileSync(outPath, Buffer.concat([header, finalData]));
 
-    console.log(`✓ Textura exportada: ${outPath} (${actualWidth}x${actualHeight}, ${format})`);
     return Buffer.concat([header, finalData]);
 }
 
@@ -574,15 +648,17 @@ function createDDSHeader(options = {}) {
 }
 
 
-console.log('reader.pointer: ', reader.pointer, 'file_length: ', input_file.length, '\n pvVar6_g', JSON.stringify(pvVar6_g))
+console.log('reader.pointer: ', reader.pointer, 'file_length: ', input_file.length)
 const exported = {
     pvVar6,
     pvVar6_b,
-    //pvVar6_c,
-    //pvVar6_d,
-    //pvVar6_e,
-    //pvVar6_f*/
+    pvVar6_c,
+    pvVar6_d,
+    pvVar6_e,
+    pvVar6_f,
+    pvVar6_g
 }
+
 function extractGeometry(pvVar6, pvVar6_b, pvVar6_d = [], pvVar6_f = [], pvVar6_g = null) {
     const vertices = [];
     const normals  = [];
@@ -919,8 +995,8 @@ function processAndExport() {
     // Mostrar modelos con múltiples instancias
     
     const objText = geometryToOBJ(geometry);
-    require('fs').writeFileSync(output_file_name, geometry.toOBJ());
-    require('fs').writeFileSync(output_file_name+'.MTL', geometry.toMTL());
-    console.log('Archivo OBJ guardado como output_with_instances.obj');
+    //require('fs').writeFileSync(output_file_name, geometry.toOBJ());
+    //require('fs').writeFileSync(output_file_name+'.MTL', geometry.toMTL());
+    console.log('Archivo OBJ guardado como output_with_instances.obj', JSON.stringify(exported));
 }
 processAndExport()
