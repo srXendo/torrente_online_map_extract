@@ -5,7 +5,7 @@
 const fs = require('fs')
 const path = require('path')
 const input_file_name = process.argv[2] || 'mp_dm_vertigo.opt'
-const output_file_name = input_file_name.replace('.opt', '_centered.obj').replace('.OPT', '_centered.obj')
+const output_file_name = input_file_name.replace('.opt', '.obj').replace('.OPT', '.obj')
 
 const input_file = fs.readFileSync(input_file_name)
 
@@ -58,9 +58,10 @@ for(let i = 0; i < numSecondary; i++){
 
 // Exportar
 let obj = `# Modelos centrados + translación\n\n`
-let obj_instance = ''
+let mtl = ``
+let materialIndex = 0;
 let vOffset = 1
-let vOffset_instance = 1
+
 let totalV = 0
 
 // Modelos base (sin transformación - ya están en posición)
@@ -90,11 +91,27 @@ console.log(`Vértices: ${totalV}`)
 
 // Exportar sin modificar (para modelos base)
 function exportModelRaw(model){
+
     if(!model) return
+    materialIndex = materialIndex +1 
+        const texture = model.textures[0] 
+        const tex = texture.texture;
+        const texName = texture.name_texture
+            ? tex.name_texture.replace('.tex', '.dds')
+            : null;
+
+        mtl += `newmtl mat_${materialIndex}\n`;
+        mtl += `Ka 1 1 1\nKd 1 1 1\nKs 0 0 0\nillum 2\n`;
+        if (texName) mtl += `map_Kd export/${texName}\n`;
+        mtl += `\n`;
+        
+
     for(const mesh of model.meshes){
         const { vb, ib, vCount, fCount, stride } = mesh
         if(!vb || !ib) continue
-        
+        obj += `usemtl mat_${materialIndex}\n`;
+       
+
         for(let i = 0; i < vCount; i++){
             const o = i * stride
             obj += `v ${vb.readFloatLE(o)} ${vb.readFloatLE(o+4)} ${-vb.readFloatLE(o+8)}\n`
@@ -116,10 +133,21 @@ function exportModelRaw(model){
 
 // Exportar centrado y movido a nueva posición
 function exportModelInstance(model, baseWorldBuf, sec, fileIdx){
+
     if(!model) return
 
-    
+        const texture = model.textures[0]
+        const tex = texture.texture;
+        const texName = texture.name_texture
+            ? tex.name_texture.replace('.tex', '.dds')
+            : null;
 
+        mtl += `newmtl mat_${parseInt(materialIndex)}\n`;
+        mtl += `Ka 1 1 1\nKd 1 1 1\nKs 0 0 0\nillum 2\n`;
+        if (texName) mtl += `map_Kd export/${texName}\n`;
+        mtl += `\n`;
+
+    
 
     const baseWorld = readMatrix(baseWorldBuf)
     const instanceM = readMatrix(sec.matBuf)
@@ -131,7 +159,8 @@ function exportModelInstance(model, baseWorldBuf, sec, fileIdx){
     for(const mesh of model.meshes){
         const { vb, ib, vCount, fCount, stride } = mesh
         if(!vb || !ib) continue
-
+        obj += `usemtl mat_${materialIndex}\n`;
+        materialIndex = materialIndex +1 
         for(let i=0;i<vCount;i++){
             const o = i * stride
 
@@ -144,9 +173,9 @@ function exportModelInstance(model, baseWorldBuf, sec, fileIdx){
             const y = lx*finalM[1] + ly*finalM[5] + lz*finalM[9]  + finalM[13]
             const z = lx*finalM[2] + ly*finalM[6] + lz*finalM[10] + finalM[14]
 
-            obj_instance += `v ${x} ${y} ${-z}\n`
+            obj += `v ${x} ${y} ${-z}\n`
 
-            obj_instance += `vt ${
+            obj += `vt ${
                 stride >= 32 ? vb.readFloatLE(o+24) : 0
             } ${
                 stride >= 32 ? 1 - vb.readFloatLE(o+28) : 0
@@ -160,24 +189,24 @@ function exportModelInstance(model, baseWorldBuf, sec, fileIdx){
             const rny = nx*finalM[1] + ny*finalM[5] + nz*finalM[9]
             const rnz = nx*finalM[2] + ny*finalM[6] + nz*finalM[10]
 
-            obj_instance += `vn ${rnx} ${rny} ${-rnz}\n`
+            obj += `vn ${rnx} ${rny} ${-rnz}\n`
         }
 
         for(let i=0;i<fCount;i++){
-            const a = ib.readUInt16LE(i*6)   + vOffset_instance
-            const b = ib.readUInt16LE(i*6+2) + vOffset_instance
-            const c = ib.readUInt16LE(i*6+4) + vOffset_instance
-            obj_instance += `f ${a}/${a}/${a} ${b}/${b}/${b} ${c}/${c}/${c}\n`
+            const a = ib.readUInt16LE(i*6)   + vOffset
+            const b = ib.readUInt16LE(i*6+2) + vOffset
+            const c = ib.readUInt16LE(i*6+4) + vOffset
+            obj += `f ${a}/${a}/${a} ${b}/${b}/${b} ${c}/${c}/${c}\n`
         }
 
-        vOffset_instance += vCount
+        vOffset += vCount
     }
 
     
 }
 
 fs.writeFileSync('./map/'+ output_file_name, obj)
-fs.writeFileSync('./map/'+'instances_'+ output_file_name, obj_instance)
+fs.writeFileSync('./map/'+ output_file_name.replace('.obj', '.mtl'), mtl)
 function parseModel(){
     const meshes = []
     const textures = []
@@ -190,11 +219,11 @@ function parseModel(){
             const tlen = reader.get_chunk(4).readUInt32LE()
             
            
-            const _Memory = reader.get_chunk(tlen)
-            // _Memory contiene nombre de las texturas 
+            const name_texture = reader.get_chunk(tlen)
+            // name_texture contiene nombre de las texturas 
             
-            const texture = get_texture(_Memory)
-            textures.push(texture);
+            const texture = get_texture(name_texture)
+            textures.push({texture, name_texture: name_texture.toString('ascii')});
         }
         const is_mesh_double = reader.get_chunk(1)
         reader.get_chunk(0x40 + 4)
