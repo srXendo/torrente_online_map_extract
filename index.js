@@ -3,6 +3,7 @@
  * Los modelos base tienen posición "baked", hay que restar su centro
  */
 const fs = require('fs')
+const path = require('path')
 const input_file_name = process.argv[2] || 'mp_dm_vertigo.opt'
 const output_file_name = input_file_name.replace('.opt', '_centered.obj').replace('.OPT', '_centered.obj')
 
@@ -57,7 +58,9 @@ for(let i = 0; i < numSecondary; i++){
 
 // Exportar
 let obj = `# Modelos centrados + translación\n\n`
+let obj_instance = ''
 let vOffset = 1
+let vOffset_instance = 1
 let totalV = 0
 
 // Modelos base (sin transformación - ya están en posición)
@@ -115,8 +118,8 @@ function exportModelRaw(model){
 function exportModelInstance(model, baseWorldBuf, sec, fileIdx){
     if(!model) return
 
-    let obj = ''
-    let vOffset = 1
+    
+
 
     const baseWorld = readMatrix(baseWorldBuf)
     const instanceM = readMatrix(sec.matBuf)
@@ -141,9 +144,9 @@ function exportModelInstance(model, baseWorldBuf, sec, fileIdx){
             const y = lx*finalM[1] + ly*finalM[5] + lz*finalM[9]  + finalM[13]
             const z = lx*finalM[2] + ly*finalM[6] + lz*finalM[10] + finalM[14]
 
-            obj += `v ${x} ${y} ${-z}\n`
+            obj_instance += `v ${x} ${y} ${-z}\n`
 
-            obj += `vt ${
+            obj_instance += `vt ${
                 stride >= 32 ? vb.readFloatLE(o+24) : 0
             } ${
                 stride >= 32 ? 1 - vb.readFloatLE(o+28) : 0
@@ -157,26 +160,27 @@ function exportModelInstance(model, baseWorldBuf, sec, fileIdx){
             const rny = nx*finalM[1] + ny*finalM[5] + nz*finalM[9]
             const rnz = nx*finalM[2] + ny*finalM[6] + nz*finalM[10]
 
-            obj += `vn ${rnx} ${rny} ${-rnz}\n`
+            obj_instance += `vn ${rnx} ${rny} ${-rnz}\n`
         }
 
         for(let i=0;i<fCount;i++){
-            const a = ib.readUInt16LE(i*6)   + vOffset
-            const b = ib.readUInt16LE(i*6+2) + vOffset
-            const c = ib.readUInt16LE(i*6+4) + vOffset
-            obj += `f ${a}/${a}/${a} ${b}/${b}/${b} ${c}/${c}/${c}\n`
+            const a = ib.readUInt16LE(i*6)   + vOffset_instance
+            const b = ib.readUInt16LE(i*6+2) + vOffset_instance
+            const c = ib.readUInt16LE(i*6+4) + vOffset_instance
+            obj_instance += `f ${a}/${a}/${a} ${b}/${b}/${b} ${c}/${c}/${c}\n`
         }
 
-        vOffset += vCount
+        vOffset_instance += vCount
     }
 
-    fs.writeFileSync('./map/' + fileIdx + output_file_name, obj)
+    
 }
 
 fs.writeFileSync('./map/'+ output_file_name, obj)
-
+fs.writeFileSync('./map/'+'instances_'+ output_file_name, obj_instance)
 function parseModel(){
     const meshes = []
+    const textures = []
     const numMat = reader.get_chunk(4).readUInt32LE()
     for(let j = 0; j < numMat; j++){
         const len = reader.get_chunk(4).readUInt32LE()
@@ -184,7 +188,13 @@ function parseModel(){
         const texCount = reader.get_chunk(4).readUInt32LE()
         for(let k = 0; k < texCount; k++){
             const tlen = reader.get_chunk(4).readUInt32LE()
-            reader.get_chunk(tlen)
+            
+           
+            const _Memory = reader.get_chunk(tlen)
+            // _Memory contiene nombre de las texturas 
+            
+            const texture = get_texture(_Memory)
+            textures.push(texture);
         }
         const is_mesh_double = reader.get_chunk(1)
         reader.get_chunk(0x40 + 4)
@@ -234,6 +244,7 @@ function parseModel(){
     
     return { 
         meshes,
+        textures,
         bboxData,
         matrixData,
         bboxMin: { x: minX, y: minY, z: minZ },
@@ -281,3 +292,188 @@ function invertRigid(m){
     return inv
 }
 
+function get_texture(buf_name_texture){
+    buf_name_texture = buf_name_texture.slice(0, buf_name_texture.length -1)
+    const name_texture = buf_name_texture.toString('ascii')
+    if (!fs.existsSync(`./demo.vpk/texs/${name_texture}`)) {
+        throw new Error(`Err: texture file not exist: ${name_texture}`)
+    }
+
+    //read_file
+    const texture_input_file = fs.readFileSync(`./demo.vpk/texs/${name_texture}`)
+    if (texture_input_file.length === 0) {
+        throw new Error(`Err: file texture is empty: ${name_texture}`)
+    }
+    const texture_reader  = new Reader(texture_input_file)
+    const unaff_EBP = {
+        name_texture: name_texture,
+        0x30: texture_reader.get_chunk(4),
+        0x11: texture_reader.get_chunk(1),
+        0x34: texture_reader.get_chunk(4),
+        0x2c: texture_reader.get_chunk(4),
+        0x28: texture_reader.get_chunk(4),
+        0x24: texture_reader.get_chunk(4),
+    }
+    unaff_EBP['pvVar4'] = texture_reader.get_chunk(unaff_EBP[0x24].readUInt32LE())
+    
+    unaff_EBP['dds'] = getBufferDds(unaff_EBP);
+    return unaff_EBP
+}
+
+
+
+function getBufferDds(unaff_EBP, outDir = './map/export') {
+    if (!fs.existsSync(outDir)) {
+        fs.mkdirSync(outDir, { recursive: true });
+    }
+
+    const name = unaff_EBP.name_texture.replace(/\0/g, '');
+
+    // 1. Obtener los datos binarios directamente (no Base64)
+    const payload = unaff_EBP.pvVar4; // Esto ya es Buffer/binario
+
+    // 2. Leer parámetros exactamente como en el código desensamblado
+    const width = unaff_EBP[0x28].readUInt32LE();
+    const height = unaff_EBP[0x2c].readUInt32LE();
+    const formatFlag = unaff_EBP[0x11].readUInt8(); // 0x00 o 0x01
+    const dataSize = unaff_EBP[0x24].readUInt32LE(); // Tamaño de datos
+    
+    // 3. Determinar formato basado en flag
+    let format;
+    let formatFourCC;
+    
+    if (formatFlag === 0x00) {
+        format = 'DXT1';
+        formatFourCC = 0x31545844; // 'DXT1'
+    } else if (formatFlag === 0x01) {
+        format = 'DXT5';
+        formatFourCC = 0x35545844; // 'DXT5'
+    } else {
+        console.warn(`Formato desconocido: 0x${formatFlag.toString(16)}, usando DXT5 por defecto`);
+        format = 'DXT5';
+        formatFourCC = 0x35545844;
+    }
+
+    // 4. Verificar si los datos necesitan procesamiento
+    // Según el código, podría haber ajuste de dimensiones
+    let actualWidth = width;
+    let actualHeight = height;
+    
+    // 5. Crear cabecera DDS con información correcta
+    const header = createDDSHeader({
+        width: actualWidth,
+        height: actualHeight,
+        format: format,
+        mipmaps: 1,
+        dataSize: dataSize
+    });
+
+    // 6. Escribir archivo
+    const outPath = path.join(outDir, name.replace('.tex','') + '.dds');
+    
+    // Si payload es un string, convertirlo a Buffer
+    let textureData;
+    if (typeof payload === 'string') {
+        // Si es Base64, decodificarlo
+        textureData = Buffer.from(payload, 'base64');
+    } else if (Buffer.isBuffer(payload)) {
+        textureData = payload;
+    } else {
+        console.error(`Tipo de datos no soportado: ${typeof payload}`);
+        return null;
+    }
+    
+    // Verificar tamaño de datos
+    const expectedSize = calculateDXTDataSize(actualWidth, actualHeight, format);
+
+    
+    // Ajustar datos si es necesario
+    let finalData = textureData;
+    if (textureData.length < expectedSize) {
+        console.warn(`Datos insuficientes, rellenando con ceros...`);
+        const paddedData = Buffer.alloc(expectedSize);
+        textureData.copy(paddedData);
+        finalData = paddedData;
+    } else if (textureData.length > expectedSize) {
+        console.warn(`Datos excesivos, truncando...`);
+        finalData = textureData.slice(0, expectedSize);
+    }
+    
+    fs.writeFileSync(outPath, Buffer.concat([header, finalData]));
+    return Buffer.concat([header, finalData]);
+}
+
+function calculateDXTDataSize(width, height, format) {
+    // Calcular tamaño para formatos DXT
+    const blockSize = (format === 'DXT1') ? 8 : 16;
+    const blocksWide = Math.max(1, Math.floor((width + 3) / 4));
+    const blocksHigh = Math.max(1, Math.floor((height + 3) / 4));
+    return blocksWide * blocksHigh * blockSize;
+}
+
+function createDDSHeader(options = {}) {
+    const {
+        width = 16,
+        height = 16,
+        format = 'DXT5',
+        mipmaps = 1,
+        dataSize = 0
+    } = options;
+
+    const header = Buffer.alloc(128);
+    header.fill(0);
+
+    // Magic number "DDS "
+    header.writeUInt32LE(0x20534444, 0); // "DDS "
+
+    // dwSize = 124
+    header.writeUInt32LE(124, 4);
+
+    // dwFlags = DDSD_CAPS | DDSD_HEIGHT | DDSD_WIDTH | DDSD_PIXELFORMAT | DDSD_LINEARSIZE
+    header.writeUInt32LE(0x21007, 8);
+
+    // dwHeight y dwWidth
+    header.writeUInt32LE(height, 12);
+    header.writeUInt32LE(width, 16);
+
+    // dwPitchOrLinearSize
+    const blockSize = (format === 'DXT1') ? 8 : 16;
+    const linearSize = Math.max(1, Math.floor((width + 3) / 4)) * blockSize;
+    header.writeUInt32LE(linearSize, 20);
+
+    // dwDepth (0 para 2D)
+    header.writeUInt32LE(0, 24);
+
+    // dwMipMapCount
+    header.writeUInt32LE(mipmaps, 28);
+
+    // --- DDS_PIXELFORMAT (offset 76) ---
+    header.writeUInt32LE(32, 76); // dwSize = 32
+    header.writeUInt32LE(0x4, 80); // dwFlags = DDPF_FOURCC
+
+    // dwFourCC
+    const fourCC = (format === 'DXT1') ? 0x31545844 :
+                   (format === 'DXT3') ? 0x33545844 :
+                   (format === 'DXT5') ? 0x35545844 : 0x20585858;
+    header.writeUInt32LE(fourCC, 84);
+
+    // dwRGBBitCount, dwRBitMask, dwGBitMask, dwBBitMask, dwABitMask (todo 0 para FOURCC)
+    header.writeUInt32LE(0, 88);
+    header.writeUInt32LE(0, 92);
+    header.writeUInt32LE(0, 96);
+    header.writeUInt32LE(0, 100);
+    header.writeUInt32LE(0, 104);
+
+    // dwCaps
+    header.writeUInt32LE(0x1000, 108); // DDSCAPS_TEXTURE
+    
+    // dwCaps2, dwCaps3, dwCaps4 (0 para texturas 2D)
+    header.writeUInt32LE(0, 112);
+    header.writeUInt32LE(0, 116);
+    header.writeUInt32LE(0, 120);
+
+    // dwReserved2
+    header.writeUInt32LE(0, 124);
+
+    return header;
+}
