@@ -93,7 +93,8 @@ console.log(`Vértices: ${totalV}`)
 function exportModelRaw(model){
 
     if(!model) return
-    materialIndex = materialIndex +1 
+    if(model.textures.length > 0){
+        materialIndex = materialIndex +1 
         const texture = model.textures[0] 
         const tex = texture.texture;
         const texName = texture.name_texture
@@ -105,11 +106,14 @@ function exportModelRaw(model){
         if (texName) mtl += `map_Kd export/${texName}\n`;
         mtl += `\n`;
         
-
+    }
     for(const mesh of model.meshes){
         const { vb, ib, vCount, fCount, stride } = mesh
         if(!vb || !ib) continue
-        obj += `usemtl mat_${materialIndex}\n`;
+        if(model.textures.length > 0){
+            obj += `usemtl mat_${materialIndex}\n`;
+        }
+        
        
 
         for(let i = 0; i < vCount; i++){
@@ -135,7 +139,7 @@ function exportModelRaw(model){
 function exportModelInstance(model, baseWorldBuf, sec, fileIdx){
 
     if(!model) return
-
+    if(model.textures.length > 0){
         const texture = model.textures[0]
         const tex = texture.texture;
         const texName = texture.name_texture
@@ -146,7 +150,7 @@ function exportModelInstance(model, baseWorldBuf, sec, fileIdx){
         mtl += `Ka 1 1 1\nKd 1 1 1\nKs 0 0 0\nillum 2\n`;
         if (texName) mtl += `map_Kd export/${texName}\n`;
         mtl += `\n`;
-
+    }
     
 
     const baseWorld = readMatrix(baseWorldBuf)
@@ -159,8 +163,10 @@ function exportModelInstance(model, baseWorldBuf, sec, fileIdx){
     for(const mesh of model.meshes){
         const { vb, ib, vCount, fCount, stride } = mesh
         if(!vb || !ib) continue
-        obj += `usemtl mat_${materialIndex}\n`;
-        materialIndex = materialIndex +1 
+        if(model.textures.length > 0){
+            obj += `usemtl mat_${materialIndex}\n`;
+            materialIndex = materialIndex +1 
+        }
         for(let i=0;i<vCount;i++){
             const o = i * stride
 
@@ -223,7 +229,11 @@ function parseModel(){
             // name_texture contiene nombre de las texturas 
             
             const texture = get_texture(name_texture)
-            textures.push({texture, name_texture: name_texture.toString('ascii')});
+            if(texture === false){
+
+            }else{
+                textures.push({texture, name_texture: name_texture.toString('ascii')});
+            }
         }
         const is_mesh_double = reader.get_chunk(1)
         reader.get_chunk(0x40 + 4)
@@ -325,13 +335,13 @@ function get_texture(buf_name_texture){
     buf_name_texture = buf_name_texture.slice(0, buf_name_texture.length -1)
     const name_texture = buf_name_texture.toString('ascii')
     if (!fs.existsSync(`./demo.vpk/texs/${name_texture}`)) {
-        throw new Error(`Err: texture file not exist: ${name_texture}`)
+        return false
     }
 
     //read_file
     const texture_input_file = fs.readFileSync(`./demo.vpk/texs/${name_texture}`)
     if (texture_input_file.length === 0) {
-        throw new Error(`Err: file texture is empty: ${name_texture}`)
+        return false
     }
     const texture_reader  = new Reader(texture_input_file)
     const unaff_EBP = {
