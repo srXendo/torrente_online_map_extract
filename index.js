@@ -4,11 +4,23 @@
  */
 const fs = require('fs')
 const path = require('path')
-const input_file_name = process.argv[2] || 'mp_dm_vertigo.opt'
-const output_file_name = input_file_name.replace('.opt', '.obj').replace('.OPT', '.obj')
+let input_file_name = 'mp_dm_vertigo.opt'
+const args = process.argv
 
+let multi_obj = false
+for(let row of args){
+    console.log(row)
+    if(row.indexOf('.opt') > -1){
+        input_file_name = row
+    }
+    if(row === '--multi'){
+        multi_obj = true
+    }
+    
+}
+console.log(`mapa ha exportar: ${input_file_name}`)
 const input_file = fs.readFileSync(input_file_name)
-
+const output_file_name = input_file_name.replace('.opt', '.obj').replace('.OPT', '.obj')
 class Reader {
     pointer = 0x00
     buffer_file = null
@@ -63,7 +75,9 @@ let materialIndex = 0;
 let vOffset = 1
 
 let totalV = 0
-
+let fileCounter = 0;
+const objFiles = [];
+const mtlFiles = [];
 // Modelos base (sin transformación - ya están en posición)
 console.log('Exportando modelos base...')
 for(let i = 0; i < numModels; i++){
@@ -89,130 +103,262 @@ for(let i=0;i<secondaryInstances.length;i++){
 console.log(`\nArchivo: ${output_file_name}`)
 console.log(`Vértices: ${totalV}`)
 
-// Exportar sin modificar (para modelos base)
-function exportModelRaw(model){
+// Variables globales que necesitarás
 
-    if(!model) return
-    if(model.textures.length > 0){
-        materialIndex = materialIndex +1 
-        const texture = model.textures[0] 
+
+
+// Exportar sin modificar (para modelos base)
+function exportModelRaw(model, filename = null) {
+    if (!model) return;
+    
+    let localObj = '';
+    let localMtl = '';
+    let localMaterialIndex = 1;
+    let localVOffset = 1;
+    
+    if (model.textures.length > 0) {
+        const texture = model.textures[0];
         const tex = texture.texture;
         const texName = texture.name_texture
-            ? tex.name_texture.replace('.tex', '.dds')
+            ? texture.name_texture.replace('.tex', '.dds')
             : null;
 
-        mtl += `newmtl mat_${materialIndex}\n`;
-        mtl += `Ka 1 1 1\nKd 1 1 1\nKs 0 0 0\nillum 2\n`;
-        if (texName) mtl += `map_Kd export/${texName}\n`;
-        mtl += `\n`;
-        
+        localMtl += `newmtl mat_${localMaterialIndex}\n`;
+        localMtl += `Ka 1 1 1\nKd 1 1 1\nKs 0 0 0\nillum 2\n`;
+        if (texName) localMtl += `map_Kd export/${texName}\n`;
+        localMtl += `\n`;
     }
-    for(const mesh of model.meshes){
-        const { vb, ib, vCount, fCount, stride } = mesh
-        if(!vb || !ib) continue
-        if(model.textures.length > 0){
+    
+    for (const mesh of model.meshes) {
+        const { vb, ib, vCount, fCount, stride } = mesh;
+        if (!vb || !ib) continue;
+        
+        if (model.textures.length > 0) {
+            localObj += `usemtl mat_${localMaterialIndex}\n`;
+        }
+
+        for (let i = 0; i < vCount; i++) {
+            const o = i * stride;
+            localObj += `v ${vb.readFloatLE(o)} ${vb.readFloatLE(o + 4)} ${-vb.readFloatLE(o + 8)}\n`;
+            localObj += `vt ${stride >= 32 ? vb.readFloatLE(o + 24) : 0} ${stride >= 32 ? 1 - vb.readFloatLE(o + 28) : 0}\n`;
+            localObj += `vn ${vb.readFloatLE(o + 12)} ${vb.readFloatLE(o + 16)} ${-vb.readFloatLE(o + 20)}\n`;
+        }
+
+        for (let i = 0; i < fCount; i++) {
+            const a = ib.readUInt16LE(i * 6) + localVOffset;
+            const b = ib.readUInt16LE(i * 6 + 2) + localVOffset;
+            const c = ib.readUInt16LE(i * 6 + 4) + localVOffset;
+            localObj += `f ${a}/${a}/${a} ${b}/${b}/${b} ${c}/${c}/${c}\n`;
+        }
+
+        localVOffset += vCount;
+    }
+
+    // Manejar multi_obj o single file
+    if (multi_obj) {
+        const baseName = filename || `model_${fileCounter++}`;
+        const objFilename = `./map/${baseName}.obj`;
+        const mtlFilename = `./map/${baseName}.mtl`;
+        
+        // Agregar referencia al material en el obj
+        if (localMtl) {
+            localObj = `mtllib ${baseName}.mtl\n` + localObj;
+        }
+        
+        fs.writeFileSync(objFilename, localObj);
+        if (localMtl) {
+            fs.writeFileSync(mtlFilename, localMtl);
+        }
+        
+        objFiles.push(objFilename);
+        mtlFiles.push(mtlFilename);
+    } else {
+        // Modo original: agregar al obj/mtl global
+        if (model.textures.length > 0) {
+            materialIndex++;
             obj += `usemtl mat_${materialIndex}\n`;
         }
         
-       
+        // Para modo single, necesitas mantener las variables globales
+        for (const mesh of model.meshes) {
+            const { vb, ib, vCount, fCount, stride } = mesh;
+            if (!vb || !ib) continue;
 
-        for(let i = 0; i < vCount; i++){
-            const o = i * stride
-            obj += `v ${vb.readFloatLE(o)} ${vb.readFloatLE(o+4)} ${-vb.readFloatLE(o+8)}\n`
-            obj += `vt ${stride >= 32 ? vb.readFloatLE(o+24) : 0} ${stride >= 32 ? 1-vb.readFloatLE(o+28) : 0}\n`
-            obj += `vn ${vb.readFloatLE(o+12)} ${vb.readFloatLE(o+16)} ${-vb.readFloatLE(o+20)}\n`
+            for (let i = 0; i < vCount; i++) {
+                const o = i * stride;
+                obj += `v ${vb.readFloatLE(o)} ${vb.readFloatLE(o + 4)} ${-vb.readFloatLE(o + 8)}\n`;
+                obj += `vt ${stride >= 32 ? vb.readFloatLE(o + 24) : 0} ${stride >= 32 ? 1 - vb.readFloatLE(o + 28) : 0}\n`;
+                obj += `vn ${vb.readFloatLE(o + 12)} ${vb.readFloatLE(o + 16)} ${-vb.readFloatLE(o + 20)}\n`;
+            }
+
+            for (let i = 0; i < fCount; i++) {
+                const a = ib.readUInt16LE(i * 6) + vOffset;
+                const b = ib.readUInt16LE(i * 6 + 2) + vOffset;
+                const c = ib.readUInt16LE(i * 6 + 4) + vOffset;
+                obj += `f ${a}/${a}/${a} ${b}/${b}/${b} ${c}/${c}/${c}\n`;
+            }
+
+            vOffset += vCount;
+            totalV += vCount;
         }
-        
-        for(let i = 0; i < fCount; i++){
-            const a = ib.readUInt16LE(i*6) + vOffset
-            const b = ib.readUInt16LE(i*6+2) + vOffset
-            const c = ib.readUInt16LE(i*6+4) + vOffset
-            obj += `f ${a}/${a}/${a} ${b}/${b}/${b} ${c}/${c}/${c}\n`
-        }
-        
-        vOffset += vCount
-        totalV += vCount
     }
 }
 
 // Exportar centrado y movido a nueva posición
-function exportModelInstance(model, baseWorldBuf, sec, fileIdx){
-
-    if(!model) return
-    if(model.textures.length > 0){
-        const texture = model.textures[0]
+function exportModelInstance(model, baseWorldBuf, sec, fileIdx, filename = null) {
+    if (!model) return;
+    
+    let localObj = '';
+    let localMtl = '';
+    let localMaterialIndex = 1;
+    let localVOffset = 1;
+    
+    if (model.textures.length > 0) {
+        const texture = model.textures[0];
         const tex = texture.texture;
         const texName = texture.name_texture
-            ? tex.name_texture.replace('.tex', '.dds')
+            ? texture.name_texture.replace('.tex', '.dds')
             : null;
 
-        mtl += `newmtl mat_${parseInt(materialIndex)}\n`;
-        mtl += `Ka 1 1 1\nKd 1 1 1\nKs 0 0 0\nillum 2\n`;
-        if (texName) mtl += `map_Kd export/${texName}\n`;
-        mtl += `\n`;
+        localMtl += `newmtl mat_${localMaterialIndex}\n`;
+        localMtl += `Ka 1 1 1\nKd 1 1 1\nKs 0 0 0\nillum 2\n`;
+        if (texName) localMtl += `map_Kd export/${texName}\n`;
+        localMtl += `\n`;
     }
-    
 
-    const baseWorld = readMatrix(baseWorldBuf)
-    const instanceM = readMatrix(sec.matBuf)
+    const baseWorld = readMatrix(baseWorldBuf);
+    const instanceM = readMatrix(sec.matBuf);
+    const invBase = invertRigid(baseWorld);
+    const finalM = mul4x4(invBase, instanceM);
 
-    // EXACTAMENTE como en Python:
-    const invBase = invertRigid(baseWorld)
-    const finalM  = mul4x4(invBase, instanceM)
-
-    for(const mesh of model.meshes){
-        const { vb, ib, vCount, fCount, stride } = mesh
-        if(!vb || !ib) continue
-        if(model.textures.length > 0){
-            obj += `usemtl mat_${materialIndex}\n`;
-            materialIndex = materialIndex +1 
+    for (const mesh of model.meshes) {
+        const { vb, ib, vCount, fCount, stride } = mesh;
+        if (!vb || !ib) continue;
+        
+        if (model.textures.length > 0) {
+            localObj += `usemtl mat_${localMaterialIndex}\n`;
+            localMaterialIndex++;
         }
-        for(let i=0;i<vCount;i++){
-            const o = i * stride
+        
+        for (let i = 0; i < vCount; i++) {
+            const o = i * stride;
 
-            const lx = vb.readFloatLE(o)
-            const ly = vb.readFloatLE(o+4)
-            const lz = vb.readFloatLE(o+8)
+            const lx = vb.readFloatLE(o);
+            const ly = vb.readFloatLE(o + 4);
+            const lz = vb.readFloatLE(o + 8);
 
-            // aplicar matriz completa
-            const x = lx*finalM[0] + ly*finalM[4] + lz*finalM[8]  + finalM[12]
-            const y = lx*finalM[1] + ly*finalM[5] + lz*finalM[9]  + finalM[13]
-            const z = lx*finalM[2] + ly*finalM[6] + lz*finalM[10] + finalM[14]
+            const x = lx * finalM[0] + ly * finalM[4] + lz * finalM[8] + finalM[12];
+            const y = lx * finalM[1] + ly * finalM[5] + lz * finalM[9] + finalM[13];
+            const z = lx * finalM[2] + ly * finalM[6] + lz * finalM[10] + finalM[14];
 
-            obj += `v ${x} ${y} ${-z}\n`
+            localObj += `v ${x} ${y} ${-z}\n`;
 
-            obj += `vt ${
-                stride >= 32 ? vb.readFloatLE(o+24) : 0
+            localObj += `vt ${
+                stride >= 32 ? vb.readFloatLE(o + 24) : 0
             } ${
-                stride >= 32 ? 1 - vb.readFloatLE(o+28) : 0
-            }\n`
+                stride >= 32 ? 1 - vb.readFloatLE(o + 28) : 0
+            }\n`;
 
-            const nx = vb.readFloatLE(o+12)
-            const ny = vb.readFloatLE(o+16)
-            const nz = vb.readFloatLE(o+20)
+            const nx = vb.readFloatLE(o + 12);
+            const ny = vb.readFloatLE(o + 16);
+            const nz = vb.readFloatLE(o + 20);
 
-            const rnx = nx*finalM[0] + ny*finalM[4] + nz*finalM[8]
-            const rny = nx*finalM[1] + ny*finalM[5] + nz*finalM[9]
-            const rnz = nx*finalM[2] + ny*finalM[6] + nz*finalM[10]
+            const rnx = nx * finalM[0] + ny * finalM[4] + nz * finalM[8];
+            const rny = nx * finalM[1] + ny * finalM[5] + nz * finalM[9];
+            const rnz = nx * finalM[2] + ny * finalM[6] + nz * finalM[10];
 
-            obj += `vn ${rnx} ${rny} ${-rnz}\n`
+            localObj += `vn ${rnx} ${rny} ${-rnz}\n`;
         }
 
-        for(let i=0;i<fCount;i++){
-            const a = ib.readUInt16LE(i*6)   + vOffset
-            const b = ib.readUInt16LE(i*6+2) + vOffset
-            const c = ib.readUInt16LE(i*6+4) + vOffset
-            obj += `f ${a}/${a}/${a} ${b}/${b}/${b} ${c}/${c}/${c}\n`
+        for (let i = 0; i < fCount; i++) {
+            const a = ib.readUInt16LE(i * 6) + localVOffset;
+            const b = ib.readUInt16LE(i * 6 + 2) + localVOffset;
+            const c = ib.readUInt16LE(i * 6 + 4) + localVOffset;
+            localObj += `f ${a}/${a}/${a} ${b}/${b}/${b} ${c}/${c}/${c}\n`;
         }
 
-        vOffset += vCount
+        localVOffset += vCount;
     }
 
-    
+    // Manejar multi_obj o single file
+    if (multi_obj) {
+        const baseName = filename || `instance_${fileCounter++}`;
+        const objFilename = `./map/${baseName}.obj`;
+        const mtlFilename = `./map/${baseName}.mtl`;
+        
+        // Agregar referencia al material en el obj
+        if (localMtl) {
+            localObj = `mtllib ${baseName}.mtl\n` + localObj;
+        }
+        
+        fs.writeFileSync(objFilename, localObj);
+        if (localMtl) {
+            fs.writeFileSync(mtlFilename, localMtl);
+        }
+        
+        objFiles.push(objFilename);
+        mtlFiles.push(mtlFilename);
+    } else {
+        // Modo original: agregar al obj/mtl global
+        if (model.textures.length > 0) {
+            materialIndex++;
+            obj += `usemtl mat_${materialIndex}\n`;
+        }
+        
+        // Para modo single, mantener las variables globales
+        for (const mesh of model.meshes) {
+            const { vb, ib, vCount, fCount, stride } = mesh;
+            if (!vb || !ib) continue;
+
+            for (let i = 0; i < vCount; i++) {
+                const o = i * stride;
+
+                const lx = vb.readFloatLE(o);
+                const ly = vb.readFloatLE(o + 4);
+                const lz = vb.readFloatLE(o + 8);
+
+                const x = lx * finalM[0] + ly * finalM[4] + lz * finalM[8] + finalM[12];
+                const y = lx * finalM[1] + ly * finalM[5] + lz * finalM[9] + finalM[13];
+                const z = lx * finalM[2] + ly * finalM[6] + lz * finalM[10] + finalM[14];
+
+                obj += `v ${x} ${y} ${-z}\n`;
+
+                obj += `vt ${
+                    stride >= 32 ? vb.readFloatLE(o + 24) : 0
+                } ${
+                    stride >= 32 ? 1 - vb.readFloatLE(o + 28) : 0
+                }\n`;
+
+                const nx = vb.readFloatLE(o + 12);
+                const ny = vb.readFloatLE(o + 16);
+                const nz = vb.readFloatLE(o + 20);
+
+                const rnx = nx * finalM[0] + ny * finalM[4] + nz * finalM[8];
+                const rny = nx * finalM[1] + ny * finalM[5] + nz * finalM[9];
+                const rnz = nx * finalM[2] + ny * finalM[6] + nz * finalM[10];
+
+                obj += `vn ${rnx} ${rny} ${-rnz}\n`;
+            }
+
+            for (let i = 0; i < fCount; i++) {
+                const a = ib.readUInt16LE(i * 6) + vOffset;
+                const b = ib.readUInt16LE(i * 6 + 2) + vOffset;
+                const c = ib.readUInt16LE(i * 6 + 4) + vOffset;
+                obj += `f ${a}/${a}/${a} ${b}/${b}/${b} ${c}/${c}/${c}\n`;
+            }
+
+            vOffset += vCount;
+        }
+    }
 }
 
-fs.writeFileSync('./map/'+ output_file_name, obj)
-fs.writeFileSync('./map/'+ output_file_name.replace('.obj', '.mtl'), mtl)
+// Al final del proceso principal
+if (!multi_obj) {
+    fs.writeFileSync('./map/' + output_file_name, obj);
+    fs.writeFileSync('./map/' + output_file_name.replace('.obj', '.mtl'), mtl);
+} else {
+    console.log(`Exportados ${objFiles.length} archivos OBJ individuales`);
+}
 function parseModel(){
     const meshes = []
     const textures = []
